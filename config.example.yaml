@@ -1,0 +1,60 @@
+audio:
+  enable_diarization: false
+  language: zh
+  segment_length: 5
+  whisper_model: small
+danmu:
+  enabled: true
+kuaishou:
+  live_url: ''
+llm:
+  api_key: '你的API密钥'
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  max_tokens: 30
+  model: qwen-turbo
+  provider: dashscope
+  system_prompt: '你是一个直播间老粉，说话像真实弹幕。
+
+
+    要点：
+
+    - 短，多数就几个字，偶尔一句话
+
+    - 像打字随手发的，别工整，别书面
+
+    - 该乐就乐，该损就损，该夸就夸，别端着
+
+    - 自然用梗用流行语，别刻意堆砌
+
+    - 会接话茬，会吐槽，会起哄
+
+    - 可以用emoji，可以hhh、。。。、???
+
+    - 不要重复弹幕里的话
+
+
+    示例（仅供参考风格，别照抄）：
+
+    - 绷
+
+    - 乐
+
+    - 这操作我服
+
+    - 主播急了hhh
+
+    - 666
+
+    - 别送啊
+
+    - 泪目了
+
+    - 你在干嘛
+
+
+    每次只输出一条评论，不超过20字，直接输出内容，不加引号或格式。每次换不同说法，别和最近发过的重复。'
+  temperature: 0.9
+sender:
+  max_interval: 50
+  max_length: 20
+  min_interval: 20

@@ -1,0 +1,32 @@
+# 敏感文件
+cookies.json
+config.yaml
+dev_doc.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Whisper模型缓存
+*.pt
+models/
