@@ -607,10 +607,7 @@ class LiveCompanionEngine:
                     self._emit_status(f"评论与最近发送过的重复，跳过: {comment}")
                     continue
 
-                # === 真人特征3：随机加语气词后缀（30%概率）===
-                if random.random() < 0.3:
-                    suffixes = ["啊", "吧", "呢", "hhh", "？", "。。。", "！"]
-                    comment += random.choice(suffixes)
+
 
                 self.last_comment = comment
                 if self.on_comment:
@@ -802,20 +799,26 @@ class LiveCompanionEngine:
             """解析视觉模型响应，兼容多种格式"""
             content = msg.content or ""
             rc = getattr(msg, "reasoning_content", "") or ""
-            # 格式1: 4.1v-thinking-flash 等，content含<think>..<answer>标签
+            # 格式1: 含<answer>...</answer>标签的思考模型输出
             answer_match = re.search(r"<answer>(.*?)</answer>", content, re.DOTALL)
             if answer_match:
                 return answer_match.group(1).strip()
-            # 格式2: content有内容（可能带换行，如 4.6v-flash）
+            # 格式2: 过滤掉<think>...</think>标签内的思考过程，只保留最终结论
             if content.strip():
-                return content.strip()
-            # 格式3: content为空，回退到reasoning_content（思考模型兼容）
+                filtered = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                if filtered:
+                    return filtered
+                # 如果过滤后为空（内容全在think里），回退到 reasoning_content
+                if rc.strip():
+                    return rc.strip()
+                return content.strip()  # 最差情况返回原始 content
+            # 格式3: content为空，回退到 reasoning_content
             if rc.strip():
                 return rc.strip()
             return ""
 
-        # 需要开启 thinking 参数的模型（思考模型列表，content字段可能为空）
-        thinking_models = {"glm-4.6v-flash", "glm-4.5v", "glm-4.5v-flash"}
+        # 需要开启 thinking 参数的模型（思考模型列表，content字段可能为空或包含思考过程）
+        thinking_models = {"glm-4.1v-thinking-flash", "glm-4.5v", "glm-4.5v-flash"}
 
         def call_vision_api():
             last_err = None
@@ -830,7 +833,7 @@ class LiveCompanionEngine:
                                 {"type": "image_url",
                                  "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}},
                                 {"type": "text",
-                                 "text": "看这张直播截图，用一句话概括直播的具体内容，不超过15个字。只输出概括内容本身，不要加任何解释或描述。"},
+                                 "text": "看这张直播截图，用一句话概括直播的具体内容，不超过15个字。只输出概括内容本身，不要加任何解释或描述，绝对不要输出你的分析过程或内心独白。"},
                             ],
                         }],
                         "max_tokens": 300,

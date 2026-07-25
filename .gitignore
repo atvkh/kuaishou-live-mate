@@ -40,6 +40,8 @@ Thumbs.db
 *.pt
 models/
 
-# ===== 临时文件 =====
+# ===== 临时/杂项文件 =====
 *.tmp
 *.bak
+*.lnk
+src/*.svg
