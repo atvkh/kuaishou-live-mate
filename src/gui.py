@@ -1006,9 +1006,9 @@ class CustomTitleBar(QWidget):
         layout.setContentsMargins(20, 0, 20, 0)
         
         self.logo = QLabel()
-        icon_path = str(APP_DIR / "图标.png")
+        icon_path = str(APP_DIR / "logo.png")
         if not os.path.exists(icon_path):
-            icon_path = str(APP_DIR / "_internal" / "图标.png")
+            icon_path = str(APP_DIR / "_internal" / "logo.png")
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)
             self.logo.setPixmap(pixmap.scaled(22, 22, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
@@ -1167,9 +1167,9 @@ class MainWindow(QMainWindow):
         self._log_history = []
 
         self.setWindowTitle(f"旁白 v{__version__}")
-        icon_path = str(APP_DIR / "图标.png")
+        icon_path = str(APP_DIR / "logo.png")
         if not os.path.exists(icon_path):
-            icon_path = str(APP_DIR / "_internal" / "图标.png")
+            icon_path = str(APP_DIR / "_internal" / "logo.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             
@@ -1683,9 +1683,9 @@ class MainWindow(QMainWindow):
 
     def _show_about(self):
         """显示关于对话框"""
-        icon_path = str(APP_DIR / "图标.png")
+        icon_path = str(APP_DIR / "logo.png")
         if not os.path.exists(icon_path):
-            icon_path = str(APP_DIR / "_internal" / "图标.png")
+            icon_path = str(APP_DIR / "_internal" / "logo.png")
             
         img_html = f"<img src='{icon_path}' width='48' height='48' style='margin-bottom: 10px;'><br>" if os.path.exists(icon_path) else ""
         

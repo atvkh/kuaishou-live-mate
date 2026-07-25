@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="logo.png" alt="旁白" width="120" height="120">
+
 # 旁白
 
 ### 快手直播间 AI 互动助手

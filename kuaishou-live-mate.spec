@@ -17,7 +17,7 @@ a = Analysis(
     datas=[
         ('config.example.yaml', '.'),
         ('src/kuaishou_pb2.py', 'src'),
-        ('图标.png', '.'),
+        ('logo.png', '.'),
         # SenseVoiceSmall ONNX 模型文件
         (os.path.join(os.path.expanduser('~'), '.cache', 'modelscope', 'models',
                       'manyeyes--sensevoice-small-onnx', 'snapshots', 'master', 'model.onnx'),

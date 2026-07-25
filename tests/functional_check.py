@@ -838,7 +838,7 @@ def check_key_files():
         "kuaishou-live-mate.spec",
         "version_info.txt",
         "app.ico",
-        "图标.png",
+        "logo.png",
         "LICENSE",
         "README.md",
         "src/__init__.py",
