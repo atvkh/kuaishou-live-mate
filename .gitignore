@@ -45,3 +45,9 @@ models/
 *.bak
 *.lnk
 src/*.svg
+
+# ===== 开发调试脚本（仅本地使用，不推送）=====
+scripts/
+
+# ===== 抓包报告（含敏感请求信息）=====
+douyin_capture_report.txt
