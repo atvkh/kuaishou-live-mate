@@ -2393,6 +2393,16 @@ class MainWindow(QMainWindow):
     def _on_update_checked(self, result: dict, silent: bool):
         """更新检查完成回调"""
         self._dismiss_loading()
+        # 检查更新过程中出错（如API 403、网络超时等）
+        if result.get("error"):
+            err = result["error"]
+            if not silent:
+                self._append_log(f"检查更新失败: {err}", "#ff9800")
+                CustomMessageBox.warning(
+                    self, "检查更新失败",
+                    f"无法连接 GitHub 检查更新。\n\n原因: {err}\n\n请前往 GitHub Releases 页面手动下载最新版：\nhttps://github.com/atvkh/live-mate/releases"
+                )
+            return
         if not result.get("has_update"):
             if not silent:
                 CustomMessageBox.information(self, "检查更新", f"已是最新版本 v{__version__}")

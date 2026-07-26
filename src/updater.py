@@ -70,6 +70,7 @@ class AutoUpdater:
                             break
 
         except Exception as e:
+            result["error"] = str(e)
             print(f"[Updater] 检查更新失败: {e}")
 
         return result
