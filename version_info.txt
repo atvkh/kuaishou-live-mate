@@ -7,8 +7,8 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
     # filevers and prodvers should be always a tuple with four items: (maj, min, build, rev)
-    filevers=(1, 0, 7, 0),
-    prodvers=(1, 0, 7, 0),
+    filevers=(1, 1, 0, 0),
+    prodvers=(1, 1, 0, 0),
     # Contains a bitmask that specifies the valid bits 'flags'r
     mask=0x3f,
     # Contains a bitmask that specifies the Boolean attributes of the file.
@@ -28,13 +28,13 @@ VSVersionInfo(
       StringTable(
         u'040904B0',
         [StringStruct(u'CompanyName', u'atvkh'),
-        StringStruct(u'FileDescription', u'旁白 - 快手直播间AI互动助手'),
-        StringStruct(u'FileVersion', u'1.0.7'),
+        StringStruct(u'FileDescription', u'旁白 - 直播间AI互动助手'),
+        StringStruct(u'FileVersion', u'1.1.0'),
         StringStruct(u'InternalName', u'旁白'),
         StringStruct(u'LegalCopyright', u'© 2026 atvkh'),
         StringStruct(u'OriginalFilename', u'旁白.exe'),
         StringStruct(u'ProductName', u'旁白'),
-        StringStruct(u'ProductVersion', u'1.0.7')])
+        StringStruct(u'ProductVersion', u'1.1.0')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [0x409, 1200])])
   ]

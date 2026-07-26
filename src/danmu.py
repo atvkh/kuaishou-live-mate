@@ -1,16 +1,16 @@
-"""弹幕采集模块：通过Playwright WebSocket拦截 + Protobuf解析读取快手直播间弹幕
+"""弹幕采集模块：通过Playwright WebSocket拦截 + Protobuf解析读取直播间弹幕
 
-参考项目: https://github.com/Superoff/kuaishou_websocket
-核心原理: 快手直播间通过WebSocket推送Protobuf编码的弹幕数据，
-         payloadType=310 对应 SCWebFeedPush，包含弹幕/礼物/点赞等信息
+平台无关的弹幕采集框架，具体协议解析委托给 Platform 实现：
+- 快手：WebSocket + kuaishou_pb2 (payloadType=310 SCWebFeedPush)
+- 抖音：WebSocket + douyin protobuf (pushFrame/Response/Message)
+
+核心原理: 直播间通过WebSocket推送Protobuf编码的弹幕数据，
+         Platform.parse_danmu_payload 负责平台专属解析
 """
 
 import asyncio
 import base64
 import threading
-import gzip
-from google.protobuf.json_format import MessageToDict
-from src.kuaishou_pb2 import SocketMessage, SCWebFeedPush
 
 # 注入到页面的JS：hook WebSocket构造函数，捕获所有WebSocket消息
 # 作为Playwright原生websocket事件的备选方案
@@ -82,10 +82,11 @@ WS_HOOK_JS = """
 
 
 class DanmuReader:
-    """通过Playwright WebSocket拦截 + Protobuf解析读取弹幕"""
+    """通过Playwright WebSocket拦截 + Protobuf解析读取弹幕（平台无关）"""
 
-    def __init__(self, page):
+    def __init__(self, page, platform=None):
         self.page = page
+        self.platform = platform  # Platform 实例，提供 WS 域名匹配和 payload 解析
         self._running = False
         self._ws_connected = False
         self._raw_queue = []  # 线程安全的原始弹幕缓冲
@@ -199,10 +200,16 @@ class DanmuReader:
         url = ws.url
         self._emit_log(f"检测到WebSocket: {url}")
 
-        # 快手弹幕WebSocket域名是 livejs-ws.kuaishou.cn
-        # 放宽匹配：任何kuaishou域名的WebSocket都尝试监听
-        if "kuaishou" in url or "livejs" in url or "/websocket" in url:
-            self._emit_log("已连接到快手弹幕WebSocket!")
+        # 通过 platform 判断是否是弹幕 WebSocket（快手/抖音域名不同）
+        is_danmu = False
+        if self.platform:
+            is_danmu = self.platform.match_danmu_ws_url(url)
+        else:
+            # 兜底：无 platform 时用旧逻辑（向后兼容）
+            is_danmu = "kuaishou" in url or "livejs" in url or "/websocket" in url
+
+        if is_danmu:
+            self._emit_log(f"已连接到弹幕WebSocket: {url}")
             self._ws_connected = True
             ws.on("framereceived", self._on_frame_received)
             ws.on("close", lambda: self._on_ws_close())
@@ -231,50 +238,18 @@ class DanmuReader:
             self._emit_log(f"帧解析错误: {e}")
 
     def _process_payload(self, payload: bytes):
-        """解析Protobuf格式的WebSocket payload"""
+        """解析 WebSocket payload，委托给 Platform 实现"""
         try:
-            # 解析Protobuf消息
-            msg = SocketMessage()
-            msg.ParseFromString(payload)
-
-            self._emit_log(f"收到帧 payloadType={msg.payloadType} compressionType={msg.compressionType} payload大小={len(msg.payload)}")
-
-            # 检查是否需要解压
-            if msg.compressionType == 2:  # GZIP
-                msg.payload = gzip.decompress(msg.payload)
-            elif msg.compressionType == 3:  # AES
-                self._emit_log("警告：检测到AES加密，暂不支持解密")
-                return
-
-            if msg.payloadType == 310:
-                # SCWebFeedPush - 弹幕推送
-                feed = SCWebFeedPush()
-                feed.ParseFromString(msg.payload)
-                obj = MessageToDict(feed, preserving_proto_field_name=True)
-
-                # 处理弹幕评论
-                comments = obj.get("commentFeeds", [])
-                if comments:
-                    self._emit_log(f"解析到 {len(comments)} 条弹幕")
-
-                for comment in comments:
-                    user_info = comment.get("user", {})
-                    username = user_info.get("userName", "匿名")
-                    content = comment.get("content", "")
-                    self._emit_log(f"弹幕详情: user={username} content={repr(content)}")
-                    if content:
-                        with self._lock:
+            if self.platform:
+                # 通过 platform 解析（快手/抖音各自实现）
+                danmu_list = self.platform.parse_danmu_payload(payload)
+                if danmu_list:
+                    self._emit_log(f"解析到 {len(danmu_list)} 条弹幕")
+                    with self._lock:
+                        for username, content in danmu_list:
                             self._raw_queue.append((username, content))
-
-            elif msg.payloadType == 300:
-                self._emit_log("收到进入房间确认(300)，等待弹幕推送...")
-            elif msg.payloadType == 101:
-                pass  # 心跳回复
-            elif msg.payloadType == 1:
-                pass  # 心跳
             else:
-                self._emit_log(f"未处理的消息类型: {msg.payloadType}")
-
+                self._emit_log("无 platform 实例，无法解析弹幕")
         except Exception as e:
             self._emit_log(f"payload解析错误: {e}")
 

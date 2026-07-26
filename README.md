@@ -4,14 +4,14 @@
 
 # 旁白
 
-### 快手直播间 AI 互动助手
+### 直播间 AI 互动助手（快手 + 抖音）
 
-[![Version](https://img.shields.io/badge/version-1.0.8-blue.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10--3.12-yellow.svg)](https://www.python.org/)
 
-实时监听直播间内容（弹幕 + 语音 + 画面），通过 LLM 生成拟人化评论自动发送，帮你热场。
+实时监听直播间内容（弹幕 + 语音 + 画面），通过 LLM 生成拟人化评论自动发送，帮你热场。支持快手、抖音双平台一键切换。
 
 [功能](#-功能) · [安装](#-安装) · [配置](#-配置) · [技术栈](#-技术栈) · [开发](#-开发)
 
@@ -23,12 +23,13 @@
 
 | 模块 | 说明 |
 |------|------|
+| **双平台支持** | 快手 + 抖音，主面板一键切换，平台抽象层隔离差异 |
 | **弹幕采集** | WebSocket 拦截 + Protobuf 解析，双方案兜底（Playwright 原生事件 + JS 注入 Hook） |
-| **语音转录** | SenseVoiceSmall ONNX，中文准确率 90%+，5-15x 快于 Whisper，自动过滤背景音乐 |
+| **语音转录** | SenseVoiceSmall ONNX，中文准确率 90%+，5-15x 快于 Whisper，VAD 静音检测 + 自动过滤背景音乐 |
 | **画面识别** | 进入直播间自动截图，视觉模型识别直播类型，注入 LLM 提示词 |
 | **多模型回退** | 视觉模型优先级队列：`glm-4.6v-flash` → `glm-4.1v-thinking-flash` → `glm-4v-flash`，429 限流自动切换 |
 | **拟人化评论** | 15% 水弹幕、随机长度分布、30% 语气词后缀、评论去重 |
-| **自动发送** | Playwright 定位输入框填入并回车 |
+| **自动发送** | 抖音 fetch API 直接发送（无需 DOM 操作），快手 Playwright 定位输入框 |
 | **悬浮舱** | 启动后自动切换迷你悬浮窗，实时显示状态 |
 | **新手引导** | 首次启动配置向导 |
 | **自动更新** | GitHub Releases 检查 + 静默升级 |
@@ -76,6 +77,8 @@ vision:
 audio:
   whisper_model: sensevoice-small              # 推荐配置
   segment_length: 8
+  vad_enabled: true                            # VAD 静音检测，减少乱码误识别
+  vad_energy_threshold: 0.01                   # 能量阈值
 
 sender:
   min_interval: 20                             # 不要低于 15，避免风控
@@ -109,7 +112,7 @@ sender:
 
 1. 启动程序，首次运行弹出新手引导
 2. 填写 API Key（百炼 + 智谱）
-3. 点击启动 → 浏览器弹出快手
+3. 点击启动 → 浏览器弹出快手/抖音
 4. 扫码登录（自动记住）
 5. 手动进入目标直播间
 6. 程序自动工作：采集弹幕、转录语音、识别画面、生成并发送评论
@@ -125,7 +128,7 @@ sender:
 | 语音转录 | [funasr-onnx](https://github.com/manyeyes/funasr-onnx) (SenseVoiceSmall) |
 | 视觉模型 | 智谱 GLM-4.6V-Flash 系列（免费，多模型回退） |
 | LLM | OpenAI SDK 兼容接口（阿里云百炼 qwen 系列） |
-| 协议 | Protobuf（快手 WebSocket 弹幕解析） |
+| 协议 | Protobuf（快手 + 抖音 WebSocket 弹幕解析） |
 | 打包 | PyInstaller (onedir) + Inno Setup |
 
 ## 📁 项目结构
@@ -137,15 +140,19 @@ kuaishou-live-mate/
 ├── installer.iss            # Inno Setup 脚本
 ├── kuaishou-live-mate.spec  # PyInstaller 配置
 ├── tests/
-│   └── functional_check.py  # 功能完整性检测（240项）
+│   └── functional_check.py  # 功能完整性检测（315项）
 └── src/
     ├── core.py              # 核心引擎
-    ├── gui.py               # GUI（悬浮舱+新手引导）
-    ├── audio.py             # 音频转录
+    ├── gui.py               # GUI（悬浮舱+新手引导+平台切换）
+    ├── audio.py             # 音频转录（SenseVoice + VAD）
     ├── danmu.py             # 弹幕采集
     ├── llm_client.py        # LLM 客户端
-    ├── sender.py            # 评论发送
+    ├── sender.py            # 评论发送（fetch API + DOM 双方案）
     ├── updater.py           # 自动更新
+    ├── platforms/           # 平台抽象层
+    │   ├── base.py          # 平台接口基类
+    │   ├── kuaishou.py      # 快手实现
+    │   └── douyin.py        # 抖音实现
     └── kuaishou_pb2.py      # Protobuf 定义
 ```
 
@@ -159,7 +166,7 @@ UI 重构或代码改动后，运行检测脚本验证功能完整性：
 python tests/functional_check.py
 ```
 
-覆盖 16 大类 240 项：环境依赖、模块导入、版本一致性、配置系统、GUI 控件、信号槽、视觉模型回退、拟人化评论、切换直播间修复等。
+覆盖 17 大类 315 项：环境依赖、模块导入、版本一致性、配置系统、GUI 控件、信号槽、视觉模型回退、拟人化评论、切换直播间修复、平台抽象层等。
 
 ### 打包
 

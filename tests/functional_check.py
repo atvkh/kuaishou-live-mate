@@ -284,11 +284,11 @@ def check_gui_controls():
         window.show()
         _pass("MainWindow 实例化成功")
 
-        # 必需控件
+        # 必需控件（v1.0.8 UI 重构后控件名变化）
         required_controls = [
             "start_btn", "stop_btn", "settings_btn",
-            "status_label", "tab_widget",
-            "danmu_text", "transcription_text", "comment_text", "log_text",
+            "comment_text",          # 评论显示区
+            "mini_btn", "log_btn",   # 悬浮/日志按钮
         ]
         for ctrl_name in required_controls:
             if hasattr(window, ctrl_name):
@@ -573,19 +573,22 @@ def check_vision_fallback():
         else:
             _fail("视频就绪检测逻辑缺失")
 
-        # 快手 CDN 匹配
-        if "pull.yximgs.com" in source:
+        # 快手 CDN 匹配（v1.1.0 起迁移到 src/platforms/kuaishou.py）
+        kuaishou_plat_path = PROJECT_ROOT / "src" / "platforms" / "kuaishou.py"
+        kuaishou_plat_src = kuaishou_plat_path.read_text(encoding="utf-8") if kuaishou_plat_path.exists() else ""
+
+        if "pull.yximgs.com" in kuaishou_plat_src:
             _pass("快手 CDN 域名匹配存在")
         else:
             _fail("快手 CDN 域名匹配缺失")
 
         # 排除项
-        if "static.yximgs.com" in source:
+        if "static.yximgs.com" in kuaishou_plat_src:
             _pass("排除封面截图 static.yximgs.com")
         else:
             _fail("未排除封面截图 static.yximgs.com")
 
-        if "ntp.nc.gifshow.com" in source:
+        if "ntp.nc.gifshow.com" in kuaishou_plat_src:
             _pass("排除 NTP ntp.nc.gifshow.com")
         else:
             _fail("未排除 NTP ntp.nc.gifshow.com")
@@ -642,6 +645,158 @@ def check_humanized_features():
 
     except Exception as e:
         _fail("拟人化特征检测失败", str(e))
+
+
+# ====================================================================
+# 10.5 AI 后缀标记检测（v1.0.9 新增）
+# ====================================================================
+def check_ai_suffix():
+    _section("【10.5】AI 后缀标记检测")
+
+    try:
+        core_path = PROJECT_ROOT / "src" / "core.py"
+        source = core_path.read_text(encoding="utf-8")
+
+        # ai_suffix 配置读取
+        if 'ai_suffix' in source and 'sender_config' in source:
+            _pass("core.py 读取 sender.ai_suffix 配置")
+        else:
+            _fail("core.py 未读取 sender.ai_suffix 配置")
+
+        # suffix_text 配置读取
+        if 'suffix_text' in source:
+            _pass("core.py 读取 sender.suffix_text 配置")
+        else:
+            _fail("core.py 未读取 sender.suffix_text 配置")
+
+        # 后缀拼接逻辑
+        if 'f"{comment}{suffix}"' in source or "comment + suffix" in source:
+            _pass("后缀拼接逻辑存在")
+        else:
+            _fail("后缀拼接逻辑缺失")
+
+        # 后缀位置在去重检查后
+        if source.find("ai_suffix") > source.find("recent_comments"):
+            _pass("后缀拼接在去重检查之后")
+        else:
+            _warn("后缀拼接位置可能不正确（应在去重检查后）")
+
+        # config.example.yaml 包含配置
+        example_path = PROJECT_ROOT / "config.example.yaml"
+        example = example_path.read_text(encoding="utf-8")
+        if "ai_suffix" in example and "suffix_text" in example:
+            _pass("config.example.yaml 包含 ai_suffix 和 suffix_text")
+        else:
+            _fail("config.example.yaml 缺少 ai_suffix / suffix_text")
+
+        # GUI 控件
+        gui_path = PROJECT_ROOT / "src" / "gui.py"
+        gui_src = gui_path.read_text(encoding="utf-8")
+        if "ai_suffix_check" in gui_src and "suffix_text_input" in gui_src:
+            _pass("GUI 包含 AI 后缀开关和文本输入框")
+        else:
+            _fail("GUI 缺少 AI 后缀相关控件")
+
+    except Exception as e:
+        _fail("AI 后缀标记检测失败", str(e))
+
+
+# ====================================================================
+# 10.6 多账号热场检测（v1.0.9 新增）
+# ====================================================================
+def check_multi_account():
+    _section("【10.6】多账号热场检测")
+
+    try:
+        # EngineManager 模块存在
+        em_path = PROJECT_ROOT / "src" / "engine_manager.py"
+        if em_path.exists():
+            _pass("src/engine_manager.py 文件存在")
+        else:
+            _fail("src/engine_manager.py 文件缺失")
+            return
+
+        em_src = em_path.read_text(encoding="utf-8")
+
+        # EngineManager 类
+        if "class EngineManager" in em_src:
+            _pass("EngineManager 类存在")
+        else:
+            _fail("EngineManager 类缺失")
+
+        # 关键方法
+        for method in ["start", "stop", "_distribute_comment"]:
+            if f"def {method}" in em_src or f"async def {method}" in em_src:
+                _pass(f"EngineManager.{method} 方法存在")
+            else:
+                _fail(f"EngineManager.{method} 方法缺失")
+
+        # 共用 LLM
+        if "_llm" in em_src and "LLMClient" in em_src:
+            _pass("EngineManager 创建共用 LLMClient")
+        else:
+            _fail("EngineManager 未创建共用 LLM")
+
+        # 随机分配
+        if "random.choice" in em_src:
+            _pass("随机分配评论逻辑存在")
+        else:
+            _fail("随机分配评论逻辑缺失")
+
+        # 回退单账号模式
+        if 'cookies.json' in em_src and 'master' in em_src:
+            _pass("回退单账号模式逻辑存在")
+        else:
+            _warn("回退单账号模式逻辑未检测到")
+
+        # core.py 主从分支
+        core_path = PROJECT_ROOT / "src" / "core.py"
+        core_src = core_path.read_text(encoding="utf-8")
+        if 'role == "slave"' in core_src or 'role == "master"' in core_src:
+            _pass("core.py 主从账号分支逻辑存在")
+        else:
+            _fail("core.py 主从账号分支缺失")
+
+        # Cookie 按账号隔离
+        if "self.cookie_file" in core_src and "DATA_DIR / cookie_file" in core_src:
+            _pass("Cookie 按账号隔离逻辑存在")
+        else:
+            _fail("Cookie 按账号隔离缺失")
+
+        # is_ready_to_send 方法
+        if "def is_ready_to_send" in core_src:
+            _pass("LiveCompanionEngine.is_ready_to_send 方法存在")
+        else:
+            _fail("LiveCompanionEngine.is_ready_to_send 缺失")
+
+        # send_comment_direct 方法
+        if "async def send_comment_direct" in core_src:
+            _pass("LiveCompanionEngine.send_comment_direct 方法存在")
+        else:
+            _fail("LiveCompanionEngine.send_comment_direct 缺失")
+
+        # on_comment_generated 回调
+        if "on_comment_generated" in core_src:
+            _pass("on_comment_generated 回调存在")
+        else:
+            _fail("on_comment_generated 回调缺失")
+
+        # GUI 多账号管理
+        gui_path = PROJECT_ROOT / "src" / "gui.py"
+        gui_src = gui_path.read_text(encoding="utf-8")
+        if "accounts_list" in gui_src and "_on_add_account" in gui_src and "_on_del_account" in gui_src:
+            _pass("GUI 多账号管理控件存在")
+        else:
+            _fail("GUI 多账号管理控件缺失")
+
+        # EngineWorker 使用 EngineManager
+        if "EngineManager" in gui_src and "self.manager" in gui_src:
+            _pass("EngineWorker 使用 EngineManager")
+        else:
+            _fail("EngineWorker 未使用 EngineManager")
+
+    except Exception as e:
+        _fail("多账号热场检测失败", str(e))
 
 
 # ====================================================================
@@ -954,6 +1109,366 @@ def check_inno_setup():
 
 
 # ====================================================================
+# 17. 平台抽象层与抖音支持检测（v1.1.0 新增）
+# ====================================================================
+def check_platform_abstraction():
+    _section("【17】平台抽象层与抖音支持检测")
+
+    try:
+        # ── 文件结构 ──
+        platforms_dir = PROJECT_ROOT / "src" / "platforms"
+        required_files = ["__init__.py", "base.py", "registry.py", "kuaishou.py", "douyin.py"]
+        for fname in required_files:
+            fpath = platforms_dir / fname
+            if fpath.exists():
+                _pass(f"平台文件存在: src/platforms/{fname}")
+            else:
+                _fail(f"平台文件缺失: src/platforms/{fname}")
+
+        # ── 工厂函数与平台列表 ──
+        try:
+            from src.platforms import create_platform, list_platforms, Platform
+            platforms = list_platforms()
+            if "kuaishou" in platforms and "douyin" in platforms:
+                _pass(f"list_platforms 返回双平台: {platforms}")
+            else:
+                _fail(f"list_platforms 平台不完整: {platforms}")
+
+            # 创建快手实例
+            ks = create_platform("kuaishou")
+            if ks.name == "kuaishou" and ks.display_name == "快手":
+                _pass("create_platform('kuaishou') 正确")
+            else:
+                _fail("create_platform('kuaishou') 返回值异常")
+
+            # 创建抖音实例
+            dy = create_platform("douyin")
+            if dy.name == "douyin" and dy.display_name == "抖音":
+                _pass("create_platform('douyin') 正确")
+            else:
+                _fail("create_platform('douyin') 返回值异常")
+
+            # 不支持的平台应抛 ValueError
+            try:
+                create_platform("bilibili")
+                _fail("create_platform('bilibili') 应抛 ValueError")
+            except ValueError:
+                _pass("create_platform 不支持的平台抛 ValueError")
+        except Exception as e:
+            _fail("平台工厂函数检测失败", str(e))
+
+        # ── Platform 抽象基类接口 ──
+        try:
+            from src.platforms.base import Platform
+            abstract_methods = [
+                "is_real_stream", "match_danmu_ws_url", "parse_danmu_payload",
+                "get_player_selectors", "get_streamer_selectors",
+                "get_category_selectors", "get_input_box_selectors",
+            ]
+            missing = [m for m in abstract_methods if not hasattr(Platform, m)]
+            if not missing:
+                _pass("Platform 抽象接口完整（7 个抽象方法）")
+            else:
+                _fail(f"Platform 抽象接口缺失: {missing}")
+
+            # 类属性
+            class_attrs = ["name", "display_name", "home_url", "login_check_js",
+                          "room_url_pattern", "title_regex", "default_system_prompt"]
+            missing_attrs = [a for a in class_attrs if not hasattr(Platform, a)]
+            if not missing_attrs:
+                _pass("Platform 类属性完整（7 个）")
+            else:
+                _fail(f"Platform 类属性缺失: {missing_attrs}")
+
+            # 可选 hook 方法
+            optional_hooks = ["prepare_danmu_connection", "build_auth_payload", "build_ack_payload"]
+            for hook in optional_hooks:
+                if hasattr(Platform, hook):
+                    _pass(f"Platform 可选 hook 存在: {hook}")
+                else:
+                    _fail(f"Platform 可选 hook 缺失: {hook}")
+        except Exception as e:
+            _fail("Platform 抽象基类检测失败", str(e))
+
+        # ── 快手平台实现 ──
+        try:
+            from src.platforms.kuaishou import KuaishouPlatform
+            ks = KuaishouPlatform()
+
+            # 基础元数据
+            if ks.home_url == "https://live.kuaishou.com":
+                _pass("快手 home_url 正确")
+            else:
+                _fail(f"快手 home_url 异常: {ks.home_url}")
+
+            if "kuaishou" in ks.room_url_pattern:
+                _pass("快手 room_url_pattern 正确")
+            else:
+                _fail(f"快手 room_url_pattern 异常: {ks.room_url_pattern}")
+
+            # 直播流检测
+            if ks.is_real_stream("https://tx-origin.pull.yximgs.com/gifshow/abc.flv", "video/x-flv"):
+                _pass("快手 is_real_stream 识别直播流")
+            else:
+                _fail("快手 is_real_stream 未识别直播流")
+
+            if not ks.is_real_stream("https://static.yximgs.com/cover/abc.jpg", "image/jpeg"):
+                _pass("快手 is_real_stream 排除封面截图")
+            else:
+                _fail("快手 is_real_stream 未排除封面截图")
+
+            if not ks.is_real_stream("https://ntp.nc.gifshow.com/ntp", "application/json"):
+                _pass("快手 is_real_stream 排除 NTP")
+            else:
+                _fail("快手 is_real_stream 未排除 NTP")
+
+            # 弹幕 WS 匹配
+            if ks.match_danmu_ws_url("wss://livejs-ws.kuaishou.cn/group1"):
+                _pass("快手 match_danmu_ws_url 识别弹幕 WS")
+            else:
+                _fail("快手 match_danmu_ws_url 未识别弹幕 WS")
+
+            # 选择器非空
+            for sel_name in ["get_player_selectors", "get_streamer_selectors",
+                             "get_category_selectors", "get_input_box_selectors"]:
+                sels = getattr(ks, sel_name)()
+                if sels:
+                    _pass(f"快手 {sel_name} 返回 {len(sels)} 个选择器")
+                else:
+                    _fail(f"快手 {sel_name} 返回空列表")
+
+            # 弹幕解析（无效数据应返回空列表，不崩溃）
+            result = ks.parse_danmu_payload(b"invalid data")
+            if result == []:
+                _pass("快手 parse_danmu_payload 异常输入兜底正常")
+            else:
+                _fail(f"快手 parse_danmu_payload 异常输入返回非空: {result}")
+        except Exception as e:
+            _fail("快手平台实现检测失败", str(e))
+
+        # ── 抖音平台实现 ──
+        try:
+            from src.platforms.douyin import DouyinPlatform
+            dy = DouyinPlatform()
+
+            # 基础元数据
+            if dy.home_url == "https://live.douyin.com":
+                _pass("抖音 home_url 正确")
+            else:
+                _fail(f"抖音 home_url 异常: {dy.home_url}")
+
+            if "douyin" in dy.room_url_pattern:
+                _pass("抖音 room_url_pattern 正确")
+            else:
+                _fail(f"抖音 room_url_pattern 异常: {dy.room_url_pattern}")
+
+            # 直播流检测
+            if dy.is_real_stream("https://pull-flv.douyin.com/abc.flv", "video/x-flv"):
+                _pass("抖音 is_real_stream 识别 FLV 流")
+            else:
+                _fail("抖音 is_real_stream 未识别 FLV 流")
+
+            if dy.is_real_stream("https://xxx/live.m3u8", "application/vnd.apple.mpegurl"):
+                _pass("抖音 is_real_stream 识别 HLS 流")
+            else:
+                _fail("抖音 is_real_stream 未识别 HLS 流")
+
+            if not dy.is_real_stream("https://lf3-static.douyin.com/abc.js", "application/javascript"):
+                _pass("抖音 is_real_stream 排除 JS 资源")
+            else:
+                _fail("抖音 is_real_stream 未排除 JS 资源")
+
+            # 弹幕 WS 匹配
+            if dy.match_danmu_ws_url("wss://webcast5-ws-web-lf.douyin.com/ws"):
+                _pass("抖音 match_danmu_ws_url 识别弹幕 WS")
+            else:
+                _fail("抖音 match_danmu_ws_url 未识别弹幕 WS")
+
+            # 选择器非空
+            for sel_name in ["get_player_selectors", "get_streamer_selectors",
+                             "get_category_selectors", "get_input_box_selectors"]:
+                sels = getattr(dy, sel_name)()
+                if sels:
+                    _pass(f"抖音 {sel_name} 返回 {len(sels)} 个选择器")
+                else:
+                    _fail(f"抖音 {sel_name} 返回空列表")
+
+            # 弹幕解析（无效数据应返回空列表，不崩溃）
+            result = dy.parse_danmu_payload(b"invalid data")
+            if result == []:
+                _pass("抖音 parse_danmu_payload 异常输入兜底正常")
+            else:
+                _fail(f"抖音 parse_danmu_payload 异常输入返回非空: {result}")
+
+            # protobuf wire format 解析器
+            if hasattr(dy, "_parse_protobuf_fields") and hasattr(dy, "_read_varint"):
+                _pass("抖音 protobuf wire format 解析器存在")
+            else:
+                _fail("抖音 protobuf wire format 解析器缺失")
+
+            # 签名/鉴权 hook
+            if asyncio.iscoroutinefunction(dy.prepare_danmu_connection):
+                _pass("抖音 prepare_danmu_connection 是协程")
+            else:
+                _fail("抖音 prepare_danmu_connection 不是协程")
+
+            if asyncio.iscoroutinefunction(dy.build_auth_payload):
+                _pass("抖音 build_auth_payload 是协程")
+            else:
+                _fail("抖音 build_auth_payload 不是协程")
+
+            if asyncio.iscoroutinefunction(dy.build_ack_payload):
+                _pass("抖音 build_ack_payload 是协程")
+            else:
+                _fail("抖音 build_ack_payload 不是协程")
+
+            # PushFrame 编码器
+            if hasattr(dy, "_encode_push_frame") and hasattr(dy, "_encode_varint"):
+                _pass("抖音 PushFrame 编码器存在")
+            else:
+                _fail("抖音 PushFrame 编码器缺失")
+
+            # check_logged_in 覆盖（抖音 sessionid 是 HttpOnly，必须用 context.cookies）
+            import inspect
+            # 检查子类是否覆盖了基类方法（而不是用默认 JS 实现）
+            dy_method = dy.check_logged_in
+            base_method = Platform.check_logged_in
+            if dy_method.__func__ is not base_method:
+                _pass("抖音覆盖 check_logged_in（HttpOnly cookie 检测）")
+            else:
+                _fail("抖音未覆盖 check_logged_in，无法检测 HttpOnly cookie")
+        except Exception as e:
+            _fail("抖音平台实现检测失败", str(e))
+
+        # ── core.py 接入 Platform 抽象 ──
+        try:
+            core_path = PROJECT_ROOT / "src" / "core.py"
+            core_src = core_path.read_text(encoding="utf-8")
+
+            if "from src.platforms import create_platform, Platform" in core_src:
+                _pass("core.py 导入 Platform 抽象层")
+            else:
+                _fail("core.py 未导入 Platform 抽象层")
+
+            if "self.platform: Platform = create_platform" in core_src or "self.platform = create_platform" in core_src:
+                _pass("core.py 创建 platform 实例")
+            else:
+                _fail("core.py 未创建 platform 实例")
+
+            # 委托给 platform 的关键调用
+            if "self.platform.is_real_stream" in core_src:
+                _pass("core.py 委托 is_real_stream 给 platform")
+            else:
+                _fail("core.py 未委托 is_real_stream 给 platform")
+
+            if "self.platform.home_url" in core_src:
+                _pass("core.py 使用 platform.home_url 导航")
+            else:
+                _fail("core.py 未使用 platform.home_url")
+
+            if "self.platform.check_logged_in" in core_src:
+                _pass("core.py 使用 platform.check_logged_in 检测登录")
+            else:
+                _fail("core.py 未使用 platform.check_logged_in")
+
+            if "self.platform.room_url_pattern" in core_src:
+                _pass("core.py 使用 platform.room_url_pattern 匹配直播间")
+            else:
+                _fail("core.py 未使用 platform.room_url_pattern")
+
+            if "self.platform.get_player_selectors" in core_src:
+                _pass("core.py 使用 platform 播放器选择器")
+            else:
+                _fail("core.py 未使用 platform 播放器选择器")
+        except Exception as e:
+            _fail("core.py 接入 Platform 检测失败", str(e))
+
+        # ── danmu.py 接入 Platform ──
+        try:
+            danmu_path = PROJECT_ROOT / "src" / "danmu.py"
+            danmu_src = danmu_path.read_text(encoding="utf-8")
+
+            if "platform" in danmu_src and "match_danmu_ws_url" in danmu_src:
+                _pass("danmu.py 使用 platform.match_danmu_ws_url")
+            else:
+                _fail("danmu.py 未使用 platform.match_danmu_ws_url")
+
+            if "parse_danmu_payload" in danmu_src:
+                _pass("danmu.py 使用 platform.parse_danmu_payload")
+            else:
+                _fail("danmu.py 未使用 platform.parse_danmu_payload")
+        except Exception as e:
+            _fail("danmu.py 接入 Platform 检测失败", str(e))
+
+        # ── sender.py 接入 Platform ──
+        try:
+            sender_path = PROJECT_ROOT / "src" / "sender.py"
+            sender_src = sender_path.read_text(encoding="utf-8")
+
+            if "get_input_box_selectors" in sender_src:
+                _pass("sender.py 使用 platform.get_input_box_selectors")
+            else:
+                _fail("sender.py 未使用 platform.get_input_box_selectors")
+        except Exception as e:
+            _fail("sender.py 接入 Platform 检测失败", str(e))
+
+        # ── config.example.yaml 含 platform 字段 ──
+        try:
+            cfg_path = PROJECT_ROOT / "config.example.yaml"
+            cfg_src = cfg_path.read_text(encoding="utf-8")
+            if "platform: kuaishou" in cfg_src or "platform:" in cfg_src:
+                _pass("config.example.yaml 含 platform 字段")
+            else:
+                _fail("config.example.yaml 缺 platform 字段")
+        except Exception as e:
+            _fail("config.example.yaml 检测失败", str(e))
+
+        # ── GUI 平台切换按钮 ──
+        try:
+            gui_path = PROJECT_ROOT / "src" / "gui.py"
+            gui_src = gui_path.read_text(encoding="utf-8")
+
+            # v1.1.1 起改为 PlatformSwitcher 滑块开关组件
+            if "class PlatformSwitcher" in gui_src and "platformChanged" in gui_src:
+                _pass("GUI PlatformSwitcher 滑块组件存在")
+            else:
+                _fail("GUI PlatformSwitcher 滑块组件缺失")
+
+            if "self.platform_switcher" in gui_src and "_switch_platform" in gui_src:
+                _pass("GUI 平台切换接线正确")
+            else:
+                _fail("GUI 平台切换接线缺失")
+
+            if "set_platform" in gui_src:
+                _pass("GUI set_platform 方法存在")
+            else:
+                _fail("GUI set_platform 方法缺失")
+
+            # 切换时清空会话
+            if "context_text.clear" in gui_src and "comment_text.clear" in gui_src:
+                _pass("GUI 切换平台时清空会话")
+            else:
+                _fail("GUI 切换平台时未清空会话")
+
+            # 引擎运行中不允许切换
+            if "请先停止当前引擎再切换平台" in gui_src:
+                _pass("GUI 引擎运行中禁止切换平台")
+            else:
+                _fail("GUI 未禁止运行中切换平台")
+
+            # AccountLoginDialog 用 check_logged_in（支持 HttpOnly cookie）
+            if "plat.check_logged_in" in gui_src:
+                _pass("GUI AccountLoginDialog 使用 check_logged_in")
+            else:
+                _fail("GUI AccountLoginDialog 未使用 check_logged_in")
+        except Exception as e:
+            _fail("GUI 平台切换检测失败", str(e))
+
+    except Exception as e:
+        _fail("平台抽象层检测失败", str(e))
+
+
+# ====================================================================
 # 主函数
 # ====================================================================
 def main():
@@ -975,12 +1490,15 @@ def main():
         check_engine_interface,
         check_vision_fallback,
         check_humanized_features,
+        check_ai_suffix,
+        check_multi_account,
         check_room_switch_fix,
         check_module_interfaces,
         check_gitignore,
         check_key_files,
         check_pyinstaller_spec,
         check_inno_setup,
+        check_platform_abstraction,
     ]
 
     for check in checks:

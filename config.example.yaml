@@ -1,19 +1,23 @@
+# 平台选择：kuaishou(快手) / douyin(抖音)
+platform: kuaishou
+
 audio:
   enable_diarization: false
   language: zh
   segment_length: 8
   whisper_model: sensevoice-small
+  # VAD：基于能量阈值的静音检测，过滤静音段减少乱码误识别
+  vad_enabled: true
+  vad_energy_threshold: 0.01  # 绝对阈值，低于此值判定静音
 danmu:
   enabled: true
-kuaishou:
-  live_url: ''
 llm:
   api_key: '你的API密钥'
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   max_tokens: 30
   model: qwen-turbo
   provider: dashscope
-  system_prompt: "你是一个正在看快手直播的普通观众，用自然的弹幕跟直播互动。\n\n[核心原则]\n- 发言像普通人随手打的，不像AI写的\n- 长度极短，大多数3-6字，偶尔一句话（别超过10字）\n- 直接反应当下内容，不做任何评价性总结\n- 如果主播说了具体的事/话，可以顺着接一句或表达惊讶/认同\n- 如果没什么内容，发个单字或者语气词就够了\n- 偶尔（约20%的概率）可以带一个贴切的emoji，要自然不要滥用\n\n[禁止]\n- 绝对不要无脑夸主播（除非主播刚展示了什么真的很厉害的东西）\n- 不要说\"主播\"两个字开头\n- 不要多个emoji堆叠、不要颜文字\n- 不要重复刚才发过的内容\n\n每次只输出一条弹幕内容，不加引号，不加任何解释。"
+  system_prompt: "你是一个正在看直播的普通观众，用自然的弹幕跟直播互动。\n\n[核心原则]\n- 发言像普通人随手打的，不像AI写的\n- 长度极短，大多数3-6字，偶尔一句话（别超过10字）\n- 直接反应当下内容，不做任何评价性总结\n- 如果主播说了具体的事/话，可以顺着接一句或表达惊讶/认同\n- 如果没什么内容，发个单字或者语气词就够了\n- 偶尔（约20%的概率）可以带一个贴切的emoji，要自然不要滥用\n\n[禁止]\n- 绝对不要无脑夸主播（除非主播刚展示了什么真的很厉害的东西）\n- 不要说\"主播\"两个字开头\n- 不要多个emoji堆叠、不要颜文字\n- 不要重复刚才发过的内容\n\n每次只输出一条弹幕内容，不加引号，不加任何解释。"
   temperature: 0.9
 vision:
   api_key: ''
@@ -28,3 +32,14 @@ sender:
   max_interval: 50
   max_length: 20
   min_interval: 20
+  ai_suffix: false           # 是否给评论加AI后缀标记
+  suffix_text: '[AI]'        # 后缀内容（可自定义）
+
+# 多账号配置（可选，不配置则单账号模式）
+# accounts:
+#   - name: "主账号"
+#     cookie_file: "cookies_main.json"
+#     role: master            # master=主账号(完整功能), slave=副账号(仅发送)
+#   - name: "副账号1"
+#     cookie_file: "cookies_slave1.json"
+#     role: slave

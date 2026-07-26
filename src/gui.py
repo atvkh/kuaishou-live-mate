@@ -13,9 +13,10 @@ from PyQt6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit as QTextEditField,
     QGroupBox, QMessageBox, QSplitter, QCheckBox,
     QProgressDialog, QMenu, QMenuBar, QFrame, QGraphicsDropShadowEffect,
-    QApplication
+    QApplication, QGraphicsOpacityEffect, QListWidget, QListWidgetItem,
+    QButtonGroup
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot, QTimer, QPoint, QPropertyAnimation, pyqtProperty, QRect
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot, QTimer, QPoint, QPropertyAnimation, pyqtProperty, QRect, QEasingCurve
 from PyQt6.QtGui import QTextCursor, QIcon, QColor, QPixmap, QPainter
 
 from src.core import LiveCompanionEngine
@@ -111,21 +112,54 @@ QTextEdit {
     color: #111827;
 }
 QScrollBar:vertical {
-    background-color: transparent;
-    width: 6px;
+    background-color: #f3f4f6;
+    width: 12px;
     border: none;
-    margin: 0px;
+    border-radius: 6px;
+    margin: 2px;
 }
 QScrollBar::handle:vertical {
-    background-color: #d1d5db;
-    border-radius: 3px;
-    min-height: 20px;
+    background-color: #9ca3af;
+    border-radius: 6px;
+    min-height: 30px;
 }
 QScrollBar::handle:vertical:hover {
-    background-color: #9ca3af;
+    background-color: #6b7280;
+}
+QScrollBar::handle:vertical:pressed {
+    background-color: #4b5563;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
+    background: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar:horizontal {
+    background-color: #f3f4f6;
+    height: 12px;
+    border: none;
+    border-radius: 6px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal {
+    background-color: #9ca3af;
+    border-radius: 6px;
+    min-width: 30px;
+}
+QScrollBar::handle:horizontal:hover {
+    background-color: #6b7280;
+}
+QScrollBar::handle:horizontal:pressed {
+    background-color: #4b5563;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+    background: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
 }
 QLabel {
     font-size: 13px;
@@ -255,7 +289,14 @@ class ToggleSwitch(QCheckBox):
 
 
 class EngineWorker(QObject):
-    """在独立线程中运行引擎的工作器"""
+    """在独立线程中运行引擎的工作器
+
+    多账号模式下使用 EngineManager 统一管理：
+      - 1 个共享浏览器 + N 个独立 context
+      - 主账号采集，副账号只发评论
+      - 评论随机分配给已就绪账号发送
+    单账号模式（accounts 未配置）下回退到单个 LiveCompanionEngine。
+    """
     status_changed = pyqtSignal(str)
     danmu_received = pyqtSignal(str, str)  # username, content
     transcription_received = pyqtSignal(str)
@@ -267,8 +308,10 @@ class EngineWorker(QObject):
     def __init__(self, config_path: str):
         super().__init__()
         self.config_path = config_path
-        self.engine = None
+        self.engine = None        # 单账号模式下的 engine
+        self.manager = None       # 多账号模式下的 EngineManager
         self._loop = None
+        self._stopping = False
 
     @pyqtSlot()
     def run(self):
@@ -276,19 +319,55 @@ class EngineWorker(QObject):
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
 
-            self.engine = LiveCompanionEngine(self.config_path)
-            self.engine.on_status = self._emit_status
-            self.engine.on_danmu = self._emit_danmu
-            self.engine.on_transcription = self._emit_transcription
-            self.engine.on_comment = self._emit_comment
-            self.engine.on_error = self._emit_error
-            self.engine.on_room_switch = self._emit_room_switch
+            # 读取配置判断走单账号还是多账号
+            import yaml as _yaml
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    cfg = _yaml.safe_load(f) or {}
+            except Exception:
+                cfg = {}
+            accounts = cfg.get("accounts") or []
 
-            self._loop.run_until_complete(self.engine.start())
+            if accounts:
+                # 多账号模式：用 EngineManager
+                from src.engine_manager import EngineManager
+                self.manager = EngineManager(self.config_path)
+                self.manager.on_status = self._emit_status
+                self.manager.on_danmu = self._emit_danmu
+                self.manager.on_transcription = self._emit_transcription
+                self.manager.on_comment = self._emit_comment
+                self.manager.on_error = self._emit_error
+                self.manager.on_room_switch = self._emit_room_switch
+                # 兼容：外部代码通过 self.engine 访问时，指向主引擎
+                # （EngineManager.start 完成后会填充 engines 列表，这里在协程内同步赋值）
+                self._loop.run_until_complete(self._run_manager())
+            else:
+                # 单账号模式：保持原逻辑
+                self.engine = LiveCompanionEngine(self.config_path)
+                self.engine.on_status = self._emit_status
+                self.engine.on_danmu = self._emit_danmu
+                self.engine.on_transcription = self._emit_transcription
+                self.engine.on_comment = self._emit_comment
+                self.engine.on_error = self._emit_error
+                self.engine.on_room_switch = self._emit_room_switch
+                self._loop.run_until_complete(self.engine.start())
         except Exception as e:
+            if self._stopping and "Event loop stopped before Future completed" in str(e):
+                return
             self.error_occurred.emit(f"引擎异常退出: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             self.stopped.emit()
+
+    async def _run_manager(self):
+        """启动 EngineManager，并把主引擎暴露到 self.engine 供外部热更新配置"""
+        await self.manager.start()
+        # 找到主引擎，外部代码（_on_settings 的热更新）通过 self.engine 访问
+        self.engine = next(
+            (e for e in self.manager.engines if e.role == "master"),
+            self.manager.engines[0] if self.manager.engines else None
+        )
 
     def _emit_status(self, msg):
         self.status_changed.emit(msg)
@@ -309,15 +388,17 @@ class EngineWorker(QObject):
         self.room_switched.emit()
 
     def stop_engine(self):
-        if self.engine and self._loop and self._loop.is_running():
+        # 多账号模式：停 manager；单账号模式：停 engine
+        target = self.manager if self.manager else self.engine
+        if target and self._loop and self._loop.is_running():
+            self._stopping = True
             future = asyncio.run_coroutine_threadsafe(
-                self.engine.stop(), self._loop
+                target.stop(), self._loop
             )
             try:
-                future.result(timeout=10)
+                future.result(timeout=15)
             except Exception:
                 pass
-            self._loop.call_soon_threadsafe(self._loop.stop)
 
 
 class PromptEditDialog(QDialog):
@@ -501,7 +582,7 @@ class WelcomeGuide(QDialog):
     STEPS = [
         {
             "title": "欢迎使用旁白",
-            "desc": "旁白是一款快手直播间 AI 互动助手。\n它可以实时采集弹幕和主播语音，通过 AI 自动生成评论并发送到直播间。\n\n接下来用三步完成初始配置。"
+            "desc": "旁白是一款直播间 AI 互动助手，支持快手和抖音。\n它可以实时采集弹幕和主播语音，通过 AI 自动生成评论并发送到直播间。\n\n接下来用三步完成初始配置。"
         },
         {
             "title": "① 配置大模型 API",
@@ -511,7 +592,7 @@ class WelcomeGuide(QDialog):
         },
         {
             "title": "② 点击启动",
-            "desc": "配置完成后，点击「启动」按钮。\n\n程序会自动打开浏览器，您只需手动进入想要互动的直播间。\n首次使用需要扫码登录快手，之后会自动记住登录状态。"
+            "desc": "配置完成后，点击「启动」按钮。\n\n程序会自动打开浏览器，您只需手动进入想要互动的直播间。\n首次使用需要扫码登录（右上角可切换快手/抖音平台），之后会自动记住登录状态。"
         },
         {
             "title": "③ 享受 AI 互动",
@@ -713,6 +794,232 @@ class LogViewerDialog(QDialog):
         self.start_pos = None
 
 
+
+class AnimatedTabWidget(QTabWidget):
+    """带淡入动画的标签页组件"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(self._on_tab_changed)
+        self._anim = None
+
+    def _on_tab_changed(self, index):
+        widget = self.widget(index)
+        if widget:
+            effect = QGraphicsOpacityEffect(widget)
+            widget.setGraphicsEffect(effect)
+            self._anim = QPropertyAnimation(effect, b"opacity")
+            self._anim.setDuration(150)
+            self._anim.setStartValue(0.0)
+            self._anim.setEndValue(1.0)
+            self._anim.finished.connect(lambda: widget.setGraphicsEffect(None))
+            self._anim.start()
+
+
+class _LoginWorker(QObject):
+    """在独立线程中运行扫码登录流程的工作器"""
+    status_changed = pyqtSignal(str)
+    success = pyqtSignal()
+    failed = pyqtSignal(str)
+    stopped = pyqtSignal()
+
+    def __init__(self, cookie_path: str, platform_name: str = "kuaishou"):
+        super().__init__()
+        self.cookie_path = cookie_path
+        self.platform_name = platform_name
+        self._loop = None
+        self._playwright = None
+        self._browser = None
+        self._cancelled = False
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(self._do_login())
+        except Exception as e:
+            self.failed.emit(f"登录异常: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            self.stopped.emit()
+
+    async def _do_login(self):
+        from playwright.async_api import async_playwright
+        from src.platforms import create_platform
+        plat = create_platform(self.platform_name)
+        self.status_changed.emit("正在启动浏览器...")
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        context = await self._browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            )
+        )
+        page = await context.new_page()
+        await page.add_init_script("""
+            Object.defineProperties(navigator, {
+                webdriver: { get: () => undefined }
+            });
+        """)
+        self.status_changed.emit(f"已打开{plat.display_name}登录页，请在浏览器中扫码...")
+        await page.goto(plat.home_url, wait_until="domcontentloaded", timeout=15000)
+
+        # 轮询登录状态（最多 5 分钟）
+        # 用 plat.check_logged_in 而非 login_check_js，支持 HttpOnly cookie 检测（抖音）
+        for _ in range(300):
+            if self._cancelled:
+                self.failed.emit("用户取消登录")
+                return
+            try:
+                logged_in = await plat.check_logged_in(page, context)
+                if logged_in:
+                    # 保存 cookie
+                    cookies = await context.cookies()
+                    import json
+                    with open(self.cookie_path, "w", encoding="utf-8") as f:
+                        json.dump(cookies, f, ensure_ascii=False, indent=2)
+                    self.status_changed.emit("登录成功，已保存登录状态")
+                    await context.close()
+                    self.success.emit()
+                    return
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
+        self.failed.emit("登录超时（5分钟未扫码）")
+
+    def cancel(self):
+        self._cancelled = True
+        # 异步关闭浏览器
+        if self._loop and self._loop.is_running():
+            async def _shutdown():
+                if self._browser:
+                    try:
+                        await self._browser.close()
+                    except Exception:
+                        pass
+                if self._playwright:
+                    try:
+                        await self._playwright.stop()
+                    except Exception:
+                        pass
+            asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
+
+    async def _cleanup(self):
+        if self._browser:
+            try:
+                await self._browser.close()
+            except Exception:
+                pass
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+
+
+class AccountLoginDialog(QDialog):
+    """扫码登录对话框：弹出浏览器让用户登录快手，登录成功后保存 cookie 到指定路径"""
+
+    def __init__(self, cookie_path: str, account_name: str, platform_name: str = "kuaishou", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("扫码登录")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+        self._cookie_path = cookie_path
+        self._account_name = account_name
+        self._platform_name = platform_name
+        self._worker = None
+        self._thread = None
+        self._init_ui()
+
+    def _init_ui(self):
+        from src.platforms import create_platform
+        plat = create_platform(self._platform_name)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel(f"正在为「{self._account_name}」登录{plat.display_name}账号")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #111827;")
+        layout.addWidget(title)
+
+        self.status_label = QLabel("准备启动浏览器...")
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet("color: #4b5563; font-size: 13px;")
+        layout.addWidget(self.status_label)
+
+        hint = QLabel(
+            f"💡 浏览器已打开{plat.display_name}登录页，请在浏览器中完成扫码或手机号登录。\n"
+            "登录成功后此窗口会自动关闭，登录状态将保存到本地，下次启动免扫码。"
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #6b7280; font-size: 12px; background-color: #f9fafb; padding: 10px; border-radius: 4px;")
+        layout.addWidget(hint)
+
+        layout.addStretch()
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        cancel_btn = QPushButton("取消登录")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background-color: transparent; border: 1px solid #d1d5db; "
+            "border-radius: 6px; color: #4b5563; padding: 6px 16px; } "
+            "QPushButton:hover { background-color: #f3f4f6; }"
+        )
+        cancel_btn.clicked.connect(self._on_cancel)
+        btn_box.addWidget(cancel_btn)
+        layout.addLayout(btn_box)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 首次显示时启动登录流程
+        if self._worker is None:
+            self._start_login()
+
+    def _start_login(self):
+        self._worker = _LoginWorker(self._cookie_path, self._platform_name)
+        self._thread = QThread()
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.status_changed.connect(self._on_status)
+        self._worker.success.connect(self._on_success)
+        self._worker.failed.connect(self._on_failed)
+        self._worker.stopped.connect(self._thread.quit)
+        self._thread.start()
+
+    def _on_status(self, msg):
+        self.status_label.setText(msg)
+
+    def _on_success(self):
+        self.accept()
+
+    def _on_failed(self, msg):
+        self.status_label.setText(f"❌ {msg}")
+        self.status_label.setStyleSheet("color: #ef4444; font-size: 13px;")
+
+    def _on_cancel(self):
+        if self._worker:
+            self._worker.cancel()
+        self.reject()
+
+    def closeEvent(self, event):
+        if self._worker:
+            self._worker.cancel()
+        # 等待线程退出
+        if self._thread and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(3000)
+        super().closeEvent(event)
+
+
 class SettingsDialog(QDialog):
     """设置对话框"""
 
@@ -727,17 +1034,26 @@ class SettingsDialog(QDialog):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
 
-        # ── 上半部分：左右两栏 ──
-        top_layout = QHBoxLayout()
+        # 实例化动画Tab
+        self.tabs = AnimatedTabWidget()
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #e5e7eb; border-radius: 4px; background: white; }
+            QTabBar::tab { padding: 8px 16px; margin-right: 4px; border: 1px solid transparent; border-bottom: 2px solid transparent; color: #6b7280; font-size: 14px; font-weight: 500; }
+            QTabBar::tab:hover { color: #111827; }
+            QTabBar::tab:selected { color: #3b82f6; border-bottom: 2px solid #3b82f6; }
+        """)
 
-        # ── 左栏：LLM + 视觉识别 ──
-        left_col = QVBoxLayout()
+        # ===== Tab 1: 模型与接口 =====
+        tab1 = QWidget()
+        tab1_layout = QVBoxLayout(tab1)
+        tab1_layout.setContentsMargins(20, 20, 20, 20)
 
-        llm_group = QGroupBox("LLM 配置")
+        llm_group = QGroupBox("文本生成 (LLM)")
         llm_layout = QFormLayout()
-        llm_layout.setSpacing(6)
-
+        llm_layout.setSpacing(12)
+        
         self.provider_combo = QComboBox()
         self.provider_combo.addItems(["阿里云百炼(DashScope)", "自定义接口"])
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
@@ -755,52 +1071,14 @@ class SettingsDialog(QDialog):
         self.base_url_input = QLineEdit()
         self.base_url_input.setPlaceholderText("仅自定义接口需要")
         llm_layout.addRow("接口地址:", self.base_url_input)
-
-        prompt_row = QHBoxLayout()
-        self.system_prompt_input = QTextEditField()
-        self.system_prompt_input.setMaximumHeight(60)
-        prompt_row.addWidget(self.system_prompt_input)
-        
-        self.edit_prompt_btn = QPushButton("⛶")
-        self.edit_prompt_btn.setFixedSize(28, 28)
-        self.edit_prompt_btn.setToolTip("弹出独立窗口编辑")
-        self.edit_prompt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.edit_prompt_btn.setStyleSheet("QPushButton { background-color: transparent; border: 1px solid #e5e7eb; border-radius: 4px; color: #6b7280; font-size: 14px; padding: 0; } QPushButton:hover { background-color: #f3f4f6; color: #111827; }")
-        self.edit_prompt_btn.clicked.connect(self._open_prompt_editor)
-        
-        prompt_vbox = QVBoxLayout()
-        prompt_vbox.addWidget(self.edit_prompt_btn)
-        prompt_vbox.addStretch()
-        prompt_row.addLayout(prompt_vbox)
-        
-        llm_layout.addRow("系统提示词:", prompt_row)
-
-        # 随机度和字数放一行
-        param_row = QHBoxLayout()
-        self.temperature_spin = QDoubleSpinBox()
-        self.temperature_spin.setRange(0.0, 2.0)
-        self.temperature_spin.setSingleStep(0.1)
-        self.temperature_spin.setFixedWidth(120)
-        param_row.addWidget(QLabel("随机度:"))
-        param_row.addWidget(self.temperature_spin)
-        param_row.addSpacing(12)
-        self.max_tokens_spin = QSpinBox()
-        self.max_tokens_spin.setRange(10, 500)
-        self.max_tokens_spin.setFixedWidth(120)
-        param_row.addWidget(QLabel("字数:"))
-        param_row.addWidget(self.max_tokens_spin)
-        param_row.addStretch()
-        llm_layout.addRow(param_row)
-
         llm_group.setLayout(llm_layout)
-        left_col.addWidget(llm_group)
+        tab1_layout.addWidget(llm_group)
 
-        vision_group = QGroupBox("视觉识别")
+        vision_group = QGroupBox("视觉感知 (Vision)")
         vision_layout = QFormLayout()
-        vision_layout.setSpacing(6)
-
-        self.vision_check = ToggleSwitch("启用截图识别直播类型")
-        self.vision_check.setToolTip("进入直播间时截图，用视觉模型识别直播内容")
+        vision_layout.setSpacing(12)
+        
+        self.vision_check = ToggleSwitch("启用截图识别直播内容")
         vision_layout.addRow("", self.vision_check)
 
         self.vision_provider_combo = QComboBox()
@@ -814,85 +1092,241 @@ class SettingsDialog(QDialog):
         vision_layout.addRow("API密钥:", self.vision_api_key_input)
 
         self.vision_model_input = QTextEditField()
-        self.vision_model_input.setMinimumHeight(120)
-        self.vision_model_input.setPlaceholderText("【多模型版】每行一个模型名，按优先级从上到下\n如:\nglm-4.6v-flash\nglm-4.1v-thinking-flash\nglm-4v-flash")
-        self.vision_model_input.setToolTip("每行一个模型名，按优先级从上到下。前一个调用失败(限流/错误)时自动切换到下一个")
-        vision_layout.addRow("视觉模型(多行):", self.vision_model_input)
+        self.vision_model_input.setMinimumHeight(80)
+        self.vision_model_input.setPlaceholderText("【多模型版】每行一个模型名，按优先级自上而下\n如:\nglm-4.6v-flash\nglm-4.1v-thinking-flash")
+        # 全局 QTextEdit 样式去掉了边框（为主界面评论区设计），这里作为输入控件需要补回边框
+        self.vision_model_input.setStyleSheet(
+            "QTextEdit { background-color: #ffffff; border: 1px solid #e5e7eb; "
+            "border-radius: 6px; padding: 6px; font-size: 13px; color: #111827; }"
+            "QTextEdit:focus { border: 1px solid #9ca3af; }"
+        )
+        vision_layout.addRow("模型优先链:", self.vision_model_input)
 
         self.vision_base_url_input = QLineEdit()
         self.vision_base_url_input.setPlaceholderText("仅自定义接口需要")
         vision_layout.addRow("接口地址:", self.vision_base_url_input)
-
+        
         vision_group.setLayout(vision_layout)
-        left_col.addWidget(vision_group)
+        tab1_layout.addWidget(vision_group)
+        tab1_layout.addStretch()
 
-        left_col.addStretch()
-        top_layout.addLayout(left_col)
+        self.tabs.addTab(tab1, "模型与接口")
 
-        # ── 右栏：评论发送 + 语音识别 ──
-        right_col = QVBoxLayout()
+        # ===== Tab 2: 互动控制 =====
+        tab2 = QWidget()
+        tab2_layout = QVBoxLayout(tab2)
+        tab2_layout.setContentsMargins(20, 20, 20, 20)
 
-        sender_group = QGroupBox("评论发送")
-        sender_layout = QFormLayout()
-        sender_layout.setSpacing(6)
+        strategy_group = QGroupBox("策略参数")
+        strategy_layout = QFormLayout()
+        strategy_layout.setSpacing(12)
+        
+        prompt_row = QHBoxLayout()
+        self.system_prompt_input = QTextEditField()
+        self.system_prompt_input.setMaximumHeight(80)
+        self.system_prompt_input.setStyleSheet(
+            "QTextEdit { background-color: #ffffff; border: 1px solid #e5e7eb; "
+            "border-radius: 6px; padding: 6px; font-size: 13px; color: #111827; }"
+            "QTextEdit:focus { border: 1px solid #9ca3af; }"
+        )
+        prompt_row.addWidget(self.system_prompt_input)
 
-        self.min_interval_spin = QSpinBox()
-        self.min_interval_spin.setRange(5, 300)
-        self.min_interval_spin.setSuffix(" 秒")
-        sender_layout.addRow("最小间隔:", self.min_interval_spin)
+        self.edit_prompt_btn = QPushButton("⛶")
+        self.edit_prompt_btn.setFixedSize(28, 28)
+        self.edit_prompt_btn.setToolTip("弹出独立窗口编辑")
+        self.edit_prompt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit_prompt_btn.setStyleSheet("QPushButton { background-color: transparent; border: 1px solid #e5e7eb; border-radius: 4px; color: #6b7280; font-size: 14px; padding: 0; } QPushButton:hover { background-color: #f3f4f6; color: #111827; }")
+        self.edit_prompt_btn.clicked.connect(self._open_prompt_editor)
+        prompt_row.addWidget(self.edit_prompt_btn, 0, Qt.AlignmentFlag.AlignTop)
+        strategy_layout.addRow("系统提示词:", prompt_row)
 
-        self.max_interval_spin = QSpinBox()
-        self.max_interval_spin.setRange(5, 600)
-        self.max_interval_spin.setSuffix(" 秒")
-        sender_layout.addRow("最大间隔:", self.max_interval_spin)
+        param_row = QHBoxLayout()
+        self.temperature_spin = QDoubleSpinBox()
+        self.temperature_spin.setRange(0.0, 2.0)
+        self.temperature_spin.setSingleStep(0.1)
+        self.temperature_spin.setFixedWidth(120)
+        param_row.addWidget(QLabel("随机度 (Temp):"))
+        param_row.addWidget(self.temperature_spin)
+        param_row.addSpacing(20)
+        
+        self.max_tokens_spin = QSpinBox()
+        self.max_tokens_spin.setRange(10, 500)
+        self.max_tokens_spin.setFixedWidth(120)
+        param_row.addWidget(QLabel("最大字数 (Tokens):"))
+        param_row.addWidget(self.max_tokens_spin)
+        param_row.addStretch()
+        strategy_layout.addRow("", param_row)
+        strategy_group.setLayout(strategy_layout)
+        tab2_layout.addWidget(strategy_group)
 
-        self.max_length_spin = QSpinBox()
-        self.max_length_spin.setRange(5, 100)
-        self.max_length_spin.setSuffix(" 字")
-        sender_layout.addRow("最大字数:", self.max_length_spin)
+        capture_group = QGroupBox("采集配置")
+        capture_layout = QFormLayout()
+        capture_layout.setSpacing(12)
+        
+        self.danmu_check = ToggleSwitch("启用弹幕采集")
+        capture_layout.addRow("", self.danmu_check)
 
-        sender_group.setLayout(sender_layout)
-        right_col.addWidget(sender_group)
-
-        audio_group = QGroupBox("语音识别")
-        audio_layout = QFormLayout()
-        audio_layout.setSpacing(6)
-
+        audio_row = QHBoxLayout()
         self.whisper_combo = QComboBox()
         self.whisper_combo.addItems(["tiny(最快)", "base(均衡)", "small(较准)", "medium(很准)", "large(最准)"])
-        audio_layout.addRow("识别模型:", self.whisper_combo)
-
+        self.whisper_combo.setFixedWidth(120)
+        audio_row.addWidget(QLabel("语音识别模型:"))
+        audio_row.addWidget(self.whisper_combo)
+        audio_row.addSpacing(20)
+        
         self.segment_spin = QSpinBox()
         self.segment_spin.setRange(5, 30)
         self.segment_spin.setSuffix(" 秒")
-        audio_layout.addRow("片段长度:", self.segment_spin)
+        self.segment_spin.setFixedWidth(120)
+        audio_row.addWidget(QLabel("语音切片长度:"))
+        audio_row.addWidget(self.segment_spin)
+        audio_row.addStretch()
+        capture_layout.addRow("", audio_row)
+        capture_group.setLayout(capture_layout)
+        tab2_layout.addWidget(capture_group)
 
-        self.danmu_check = ToggleSwitch("启用弹幕采集")
-        audio_layout.addRow("", self.danmu_check)
+        sender_group = QGroupBox("发送机制")
+        sender_layout = QFormLayout()
+        sender_layout.setSpacing(12)
+        
+        interval_row = QHBoxLayout()
+        self.min_interval_spin = QSpinBox()
+        self.min_interval_spin.setRange(5, 300)
+        self.min_interval_spin.setSuffix(" 秒")
+        self.min_interval_spin.setFixedWidth(100)
+        interval_row.addWidget(QLabel("间隔随机范围:"))
+        interval_row.addWidget(self.min_interval_spin)
+        interval_row.addWidget(QLabel("-"))
+        self.max_interval_spin = QSpinBox()
+        self.max_interval_spin.setRange(5, 600)
+        self.max_interval_spin.setSuffix(" 秒")
+        self.max_interval_spin.setFixedWidth(100)
+        interval_row.addWidget(self.max_interval_spin)
+        interval_row.addStretch()
+        sender_layout.addRow("", interval_row)
 
-        audio_group.setLayout(audio_layout)
-        right_col.addWidget(audio_group)
+        limit_row = QHBoxLayout()
+        self.max_length_spin = QSpinBox()
+        self.max_length_spin.setRange(5, 100)
+        self.max_length_spin.setSuffix(" 字")
+        self.max_length_spin.setFixedWidth(100)
+        limit_row.addWidget(QLabel("截断拦截上限:"))
+        limit_row.addWidget(self.max_length_spin)
+        limit_row.addStretch()
+        sender_layout.addRow("", limit_row)
 
-        # 快手提示（精简）
-        ks_hint = QLabel("启动后自动打开浏览器，手动进入直播间即可。\n首次需扫码登录，之后自动记住。")
-        ks_hint.setWordWrap(True)
-        ks_hint.setStyleSheet("color: #27ae60; font-size: 11px; padding: 4px;")
-        right_col.addWidget(ks_hint)
+        ai_suffix_row = QHBoxLayout()
+        self.ai_suffix_check = ToggleSwitch("启用AI小尾巴标记")
+        ai_suffix_row.addWidget(self.ai_suffix_check)
+        ai_suffix_row.addSpacing(10)
+        self.suffix_text_input = QLineEdit()
+        self.suffix_text_input.setPlaceholderText("后缀内容 (如 [AI])")
+        self.suffix_text_input.setFixedWidth(150)
+        ai_suffix_row.addWidget(self.suffix_text_input)
+        ai_suffix_row.addStretch()
+        sender_layout.addRow("", ai_suffix_row)
 
-        right_col.addStretch()
-        top_layout.addLayout(right_col)
+        sender_group.setLayout(sender_layout)
+        tab2_layout.addWidget(sender_group)
+        
+        tab2_layout.addStretch()
+        self.tabs.addTab(tab2, "互动控制")
 
-        layout.addLayout(top_layout)
+        # ===== Tab 3: 多账号管理 =====
+        tab3 = QWidget()
+        tab3_layout = QVBoxLayout(tab3)
+        tab3_layout.setContentsMargins(20, 20, 20, 20)
 
-        # ── 底部按钮 ──
-        btn_layout = QHBoxLayout()
-        save_btn = QPushButton("保存")
+        accounts_hint = QLabel(
+            "通过添加多个账号实现热场效果：主账号采集直播内容并生成评论，副账号只负责发评论。\n"
+            "点击「登录新账号」会弹出浏览器，扫码登录后自动保存登录状态，下次启动免扫码。\n"
+            "添加时不区分角色，启动时若没有 master 会自动把第一个账号当主号；也可在右侧手动指定。\n"
+            "不配置任何账号则自动使用单账号模式。"
+        )
+        accounts_hint.setWordWrap(True)
+        accounts_hint.setStyleSheet("color: #6b7280; font-size: 13px; margin-bottom: 10px;")
+        tab3_layout.addWidget(accounts_hint)
+
+        self.accounts_list = QListWidget()
+        self.accounts_list.setMinimumHeight(150)
+        self.accounts_list.setStyleSheet("QListWidget { border: 1px solid #d1d5db; border-radius: 4px; padding: 4px; }")
+        tab3_layout.addWidget(self.accounts_list)
+
+        btn_row = QHBoxLayout()
+        add_acc_btn = QPushButton("➕ 登录新账号")
+        add_acc_btn.setToolTip("弹出浏览器，扫码登录后自动保存登录状态")
+        add_acc_btn.clicked.connect(self._on_add_account)
+        add_acc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        del_acc_btn = QPushButton("🗑️ 删除选中账号")
+        del_acc_btn.clicked.connect(self._on_del_account)
+        del_acc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        btn_row.addWidget(add_acc_btn)
+        btn_row.addWidget(del_acc_btn)
+        btn_row.addStretch()
+        tab3_layout.addLayout(btn_row)
+
+        tab3_layout.addSpacing(10)
+
+        acc_edit_group = QGroupBox("选中账号属性")
+        acc_edit_layout = QFormLayout()
+        acc_edit_layout.setSpacing(12)
+
+        self.acc_name_input = QLineEdit()
+        self.acc_name_input.setPlaceholderText("例如：主号 / 捧哏1号")
+        acc_edit_layout.addRow("展示名称:", self.acc_name_input)
+
+        # Cookie 状态显示（只读，自动管理，不再手填文件名）
+        self.acc_cookie_input = QLineEdit()
+        self.acc_cookie_input.setReadOnly(True)
+        self.acc_cookie_input.setPlaceholderText("未登录（点击上方「登录新账号」扫码）")
+        self.acc_cookie_input.setStyleSheet("QLineEdit { color: #6b7280; background-color: #f9fafb; }")
+        acc_edit_layout.addRow("登录状态:", self.acc_cookie_input)
+
+        self.acc_role_combo = QComboBox()
+        self.acc_role_combo.addItems(["Master (主控账号，完整权限)", "Slave (只发评论的副账号)"])
+        acc_edit_layout.addRow("职能分配:", self.acc_role_combo)
+
+        # 重新登录按钮（用于已登录账号失效时刷新 cookie）
+        self.acc_relogin_btn = QPushButton("🔄 重新扫码登录")
+        self.acc_relogin_btn.setToolTip("清空该账号当前登录状态，重新扫码")
+        self.acc_relogin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.acc_relogin_btn.clicked.connect(self._on_relogin_account)
+        acc_edit_layout.addRow("", self.acc_relogin_btn)
+
+        self.accounts_list.currentItemChanged.connect(self._on_account_selected)
+
+        acc_edit_group.setLayout(acc_edit_layout)
+        tab3_layout.addWidget(acc_edit_group)
+        tab3_layout.addStretch()
+
+        self.tabs.addTab(tab3, "账号管理")
+
+        layout.addWidget(self.tabs)
+
+        # ── 底部常驻区 ──
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setContentsMargins(10, 0, 10, 0)
+        
+        ks_hint = QLabel("💡 启动后自动打开内置浏览器，手动进入目标直播间即可。(首次需扫码登录)")
+        ks_hint.setStyleSheet("color: #27ae60; font-size: 12px; font-weight: 500;")
+        bottom_layout.addWidget(ks_hint)
+        
+        bottom_layout.addStretch()
+
+        save_btn = QPushButton("保存配置")
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet("QPushButton { background-color: #3b82f6; color: white; padding: 6px 20px; font-weight: bold; border-radius: 4px; } QPushButton:hover { background-color: #2563eb; }")
         save_btn.clicked.connect(self._save)
+        
         cancel_btn = QPushButton("取消")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
+        
+        bottom_layout.addWidget(cancel_btn)
+        bottom_layout.addWidget(save_btn)
+        
+        layout.addLayout(bottom_layout)
 
     def _on_provider_changed(self, index):
         is_custom = index == 1  # 索引1为"自定义接口"
@@ -901,6 +1335,163 @@ class SettingsDialog(QDialog):
     def _on_vision_provider_changed(self, index):
         is_custom = index == 2  # 索引2为"自定义接口"
         self.vision_base_url_input.setEnabled(is_custom)
+
+    # ── 多账号管理 ──
+    def _on_add_account(self):
+        """弹出浏览器让用户扫码登录，登录成功后自动保存 cookie 并添加到列表"""
+        # 先同步当前选中条目的编辑
+        self._sync_current_account()
+
+        # 添加账号时不强制分配 role，统一默认 slave
+        # 启动时 EngineManager 会自动兜底：找不到 master 就把第一个账号当 master
+        # 用户也可以稍后在右侧"职能分配"下拉框手动指定某个账号为 master
+        idx = self.accounts_list.count() + 1
+        default_role = "slave"
+        default_name = f"账号{idx}"
+        # cookie 文件名用平台前缀 + 时间戳，避免快手/抖音 cookie 文件冲突
+        import time
+        current_platform = self.config.get("platform", "kuaishou")
+        cookie_file = f"cookies_{current_platform}_{int(time.time() * 1000) % 100000}.json"
+
+        # 弹出扫码登录对话框
+        from src import DATA_DIR
+        cookie_path = str(DATA_DIR / cookie_file)
+        login_dialog = AccountLoginDialog(cookie_path, default_name, current_platform, self)
+        if login_dialog.exec() != QDialog.DialogCode.Accepted:
+            return  # 用户取消
+
+        # 登录成功，添加到列表
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, {
+            "name": default_name,
+            "cookie_file": cookie_file,
+            "role": default_role,
+            "logged_in": True,
+        })
+        self._refresh_account_item_text(item)
+        self.accounts_list.addItem(item)
+        self.accounts_list.setCurrentItem(item)
+        self._append_log(f"已添加账号：{default_name}（role 可在右侧修改）", "#4caf50")
+
+    def _on_relogin_account(self):
+        """对选中的账号重新扫码登录（刷新 cookie）"""
+        item = self.accounts_list.currentItem()
+        if item is None:
+            QMessageBox.information(self, "提示", "请先在列表中选中一个账号")
+            return
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        name = data.get("name", "未命名")
+        cookie_file = data.get("cookie_file", "cookies.json")
+        from src import DATA_DIR
+        cookie_path = str(DATA_DIR / cookie_file)
+
+        reply = QMessageBox.question(
+            self, "确认重新登录",
+            f"将清空「{name}」的当前登录状态并重新扫码，确定继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        current_platform = self.config.get("platform", "kuaishou")
+        login_dialog = AccountLoginDialog(cookie_path, name, current_platform, self)
+        if login_dialog.exec() == QDialog.DialogCode.Accepted:
+            data["logged_in"] = True
+            item.setData(Qt.ItemDataRole.UserRole, data)
+            self._refresh_account_item_text(item)
+            self._append_log(f"账号「{name}」已重新登录", "#4caf50")
+
+    def _on_del_account(self):
+        """删除当前选中的账号条目（同时删除对应 cookie 文件）"""
+        item = self.accounts_list.currentItem()
+        if item is None:
+            return
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        name = data.get("name", "未命名")
+        cookie_file = data.get("cookie_file", "")
+
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定删除账号「{name}」？\n对应的登录状态文件也会被删除。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 删除 cookie 文件
+        if cookie_file:
+            from src import DATA_DIR
+            cookie_path = DATA_DIR / cookie_file
+            if cookie_path.exists():
+                try:
+                    cookie_path.unlink()
+                except Exception:
+                    pass
+
+        row = self.accounts_list.row(item)
+        self.accounts_list.takeItem(row)
+        if self.accounts_list.count() > 0:
+            self.accounts_list.setCurrentRow(0)
+        else:
+            self.acc_name_input.clear()
+            self.acc_cookie_input.clear()
+            self.acc_role_combo.setCurrentIndex(1)
+
+    def _on_account_selected(self, current, previous):
+        """选中条目变化时，先把旧条目的输入回写，再加载新条目的数据"""
+        if previous is not None:
+            self._save_item_data(previous)
+        if current is None:
+            return
+        data = current.data(Qt.ItemDataRole.UserRole) or {
+            "name": "", "cookie_file": "", "role": "slave", "logged_in": False
+        }
+        self.acc_name_input.blockSignals(True)
+        self.acc_cookie_input.blockSignals(True)
+        self.acc_role_combo.blockSignals(True)
+        self.acc_name_input.setText(data.get("name", ""))
+        # 显示登录状态而非文件名
+        if data.get("logged_in"):
+            self.acc_cookie_input.setText(f"✓ 已登录（{data.get('cookie_file', '')}）")
+        else:
+            self.acc_cookie_input.setText("未登录")
+        role = data.get("role", "slave")
+        self.acc_role_combo.setCurrentIndex(0 if role == "master" else 1)
+        self.acc_name_input.blockSignals(False)
+        self.acc_cookie_input.blockSignals(False)
+        self.acc_role_combo.blockSignals(False)
+
+    def _sync_current_account(self):
+        """把右侧输入框（名称、role）回写到当前选中条目（cookie 状态不通过手填改）"""
+        item = self.accounts_list.currentItem()
+        if item is not None:
+            self._save_item_data(item)
+
+    def _save_item_data(self, item):
+        """把右侧输入框的内容写回指定 QListWidgetItem"""
+        if item is None:
+            return
+        old_data = item.data(Qt.ItemDataRole.UserRole) or {}
+        role = "master" if self.acc_role_combo.currentIndex() == 0 else "slave"
+        name = self.acc_name_input.text().strip() or "未命名"
+        new_data = {
+            "name": name,
+            "cookie_file": old_data.get("cookie_file", "cookies.json"),
+            "role": role,
+            "logged_in": old_data.get("logged_in", False),
+        }
+        item.setData(Qt.ItemDataRole.UserRole, new_data)
+        self._refresh_account_item_text(item)
+
+    def _refresh_account_item_text(self, item):
+        """根据 data 刷新列表项显示文本"""
+        if item is None:
+            return
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        name = data.get("name", "未命名")
+        role = data.get("role", "slave")
+        logged = "✓已登录" if data.get("logged_in") else "✗未登录"
+        item.setText(f"{name}  ({role})  {logged}")
 
     def _load_values(self):
         llm = self.config.get("llm", {})
@@ -917,6 +1508,36 @@ class SettingsDialog(QDialog):
         self.min_interval_spin.setValue(sender.get("min_interval", 20))
         self.max_interval_spin.setValue(sender.get("max_interval", 50))
         self.max_length_spin.setValue(sender.get("max_length", 20))
+        # AI 后缀
+        self.ai_suffix_check.setChecked(sender.get("ai_suffix", False))
+        self.suffix_text_input.setText(sender.get("suffix_text", "[AI]"))
+
+        # 多账号列表
+        self.accounts_list.clear()
+        accounts = self.config.get("accounts") or []
+        from src import DATA_DIR as _DATA_DIR
+        for acc in accounts:
+            name = acc.get("name", "未命名")
+            cookie_file = acc.get("cookie_file", "cookies.json")
+            role = acc.get("role", "slave")
+            # 判断登录状态：cookie 文件存在且非空视为已登录
+            cookie_path = _DATA_DIR / cookie_file
+            logged_in = cookie_path.exists() and cookie_path.stat().st_size > 0
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, {
+                "name": name,
+                "cookie_file": cookie_file,
+                "role": role,
+                "logged_in": logged_in,
+            })
+            self._refresh_account_item_text(item)
+            self.accounts_list.addItem(item)
+        if self.accounts_list.count() > 0:
+            self.accounts_list.setCurrentRow(0)
+        else:
+            self.acc_name_input.clear()
+            self.acc_cookie_input.clear()
+            self.acc_role_combo.setCurrentIndex(1)
 
         audio = self.config.get("audio", {})
         model_map = {"tiny": 0, "base": 1, "small": 2, "medium": 3, "large": 4}
@@ -968,7 +1589,25 @@ class SettingsDialog(QDialog):
             "min_interval": self.min_interval_spin.value(),
             "max_interval": self.max_interval_spin.value(),
             "max_length": self.max_length_spin.value(),
+            "ai_suffix": self.ai_suffix_check.isChecked(),
+            "suffix_text": self.suffix_text_input.text().strip() or "[AI]",
         }
+        # 多账号：先回写当前编辑中的条目，再收集全部
+        self._sync_current_account()
+        accounts = []
+        for i in range(self.accounts_list.count()):
+            item = self.accounts_list.item(i)
+            data = item.data(Qt.ItemDataRole.UserRole) or {}
+            accounts.append({
+                "name": data.get("name", "未命名"),
+                "cookie_file": data.get("cookie_file", "cookies.json"),
+                "role": data.get("role", "slave"),
+            })
+        # 空列表不写入，避免覆盖配置时留下空段
+        if accounts:
+            self.config["accounts"] = accounts
+        elif "accounts" in self.config:
+            del self.config["accounts"]
         self.config["audio"] = {
             "whisper_model": model_map.get(self.whisper_combo.currentIndex(), "base"),
             "language": "zh",
@@ -1153,6 +1792,114 @@ class MiniCompanionWindow(QWidget):
         self.start_pos = None
 
 
+
+
+
+class PlatformSwitcher(QWidget):
+    platformChanged = pyqtSignal(str)
+
+    def __init__(self, platform_order: list, current_platform: str, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(140, 36)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self.platforms = platform_order
+        from src.platforms import create_platform
+        self.names = {p: create_platform(p).display_name for p in self.platforms}
+        self.colors = {"kuaishou": "#ff6b35", "douyin": "#111827"}
+        
+        try:
+            self.current_idx = self.platforms.index(current_platform)
+        except ValueError:
+            self.current_idx = 0
+
+        # 底槽 (半透明灰色，极简边缘)
+        self.track = QFrame(self)
+        self.track.setGeometry(0, 0, 140, 36)
+        self.track.setStyleSheet("""
+            QFrame { 
+                background-color: #f3f4f6; 
+                border: 1px solid #d1d5db;
+                border-radius: 18px; 
+            }
+        """)
+
+        # 底部固定文字 (非选中状态：灰色)
+        self.label_left = QLabel(self.names.get(self.platforms[0], "快手") if self.platforms else "", self)
+        self.label_left.setGeometry(8, 0, 60, 36)
+        self.label_left.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label_left.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: bold; background: transparent;")
+
+        self.label_right = QLabel(self.names.get(self.platforms[1], "抖音") if len(self.platforms) > 1 else "", self)
+        self.label_right.setGeometry(72, 0, 60, 36)
+        self.label_right.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label_right.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: bold; background: transparent;")
+
+        # 悬浮纯白滑块
+        self.thumb = QFrame(self)
+        self.thumb.resize(72, 28)
+        self.thumb.setStyleSheet("""
+            QFrame { 
+                background-color: #ffffff; 
+                border-radius: 14px; 
+                border: 1px solid #e5e7eb;
+            }
+        """)
+        
+        # 阴影效果 (苹果毛玻璃悬浮风)
+        shadow = QGraphicsDropShadowEffect(self.thumb)
+        shadow.setBlurRadius(8)
+        shadow.setOffset(0, 2)
+        from PyQt6.QtGui import QColor
+        shadow.setColor(QColor(0, 0, 0, 35))
+        self.thumb.setGraphicsEffect(shadow)
+        
+        # 滑块上的高亮文字
+        self.thumb_label = QLabel(self.thumb)
+        self.thumb_label.setGeometry(0, 0, 72, 28)
+        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._update_thumb_visuals(self.current_idx, animate=False)
+
+        self.anim = QPropertyAnimation(self.thumb, b"geometry")
+        self.anim.setDuration(300)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutBack)  # 物理弹性回弹
+
+    def mouseReleaseEvent(self, event):
+        if len(self.platforms) < 2:
+            return
+        # 无论点哪里都直接切换
+        self.current_idx = 1 if self.current_idx == 0 else 0
+        
+        self._update_thumb_visuals(self.current_idx, animate=True)
+        self.platformChanged.emit(self.platforms[self.current_idx])
+
+    def _update_thumb_visuals(self, idx, animate=False):
+        if idx >= len(self.platforms): return
+        plat = self.platforms[idx]
+        color = self.colors.get(plat, "#3b82f6")
+        
+        # 悬浮风中，滑块始终纯白，文字随平台变色
+        self.thumb_label.setText(self.names.get(plat, ""))
+        self.thumb_label.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: bold; background: transparent;")
+        
+        target_x = 4 if idx == 0 else 140 - 72 - 4
+        
+        if animate:
+            start_rect = self.thumb.geometry()
+            end_rect = QRect(target_x, 4, 72, 28)
+            self.anim.setStartValue(start_rect)
+            self.anim.setEndValue(end_rect)
+            self.anim.start()
+        else:
+            self.thumb.move(target_x, 4)
+
+    def set_platform(self, name: str):
+        if name in self.platforms:
+            idx = self.platforms.index(name)
+            if idx != self.current_idx:
+                self.current_idx = idx
+                self._update_thumb_visuals(idx, animate=True)
 class MainWindow(QMainWindow):
     def __init__(self, config_path: str = None):
         super().__init__()
@@ -1165,6 +1912,9 @@ class MainWindow(QMainWindow):
         self._thread = None
         self._comment_count = 0
         self._log_history = []
+
+        # 当前平台：从配置读取，默认快手
+        self.current_platform = self.config.get("platform", "kuaishou")
 
         self.setWindowTitle(f"旁白 v{__version__}")
         icon_path = str(APP_DIR / "logo.png")
@@ -1288,6 +2038,13 @@ class MainWindow(QMainWindow):
 
         top_bar.addStretch()
 
+        # ── 平台切换控件（右上角滑块开关） ──
+        from src.platforms import list_platforms
+        self._platform_order = list_platforms()  # ["kuaishou", "douyin"]
+        self.platform_switcher = PlatformSwitcher(self._platform_order, self.current_platform)
+        self.platform_switcher.platformChanged.connect(self._switch_platform)
+        top_bar.addWidget(self.platform_switcher)
+
         main_layout.addLayout(top_bar)
         
         # ── 主体双栏布局 ──
@@ -1360,6 +2117,34 @@ class MainWindow(QMainWindow):
             self._log_dialog.add_log(timestamp, text, color)
 
     # ── 控制按钮 ──
+
+
+
+
+    def _switch_platform(self, name: str):
+        """实际执行平台切换：停止引擎检查、更新配置、刷新按钮、清空会话"""
+        if name == self.current_platform:
+            return
+
+        # 引擎运行中不允许切换
+        if self._worker and self._thread and self._thread.isRunning():
+            CustomMessageBox.warning(self, "提示", "请先停止当前引擎再切换平台")
+            return
+
+        self.current_platform = name
+        self.config["platform"] = name
+        self._save_config()
+
+        # 刷新滑块状态 (如果是外部代码直接调用_switch_platform，需要同步UI)
+        if hasattr(self, 'platform_switcher'):
+            self.platform_switcher.set_platform(name)
+
+        # 清空会话状态
+        self.context_text.clear()
+        self.comment_text.clear()
+        from src.platforms import create_platform
+        plat = create_platform(name)
+        self._append_log(f"已切换到 {plat.display_name}", "#4fc3f7")
 
     def _on_start(self):
         try:
@@ -1694,7 +2479,7 @@ class MainWindow(QMainWindow):
             f"<div style='text-align: center;'>"
             f"{img_html}"
             f"<h3 style='margin-bottom: 4px;'>旁白 v{__version__}</h3>"
-            f"<p style='color: #4b5563; margin-top: 0; margin-bottom: 2px;'>快手直播间 AI 互动助手</p>"
+            f"<p style='color: #4b5563; margin-top: 0; margin-bottom: 2px;'>直播间 AI 互动助手（快手 / 抖音）</p>"
             f"<p style='color: #6b7280; font-size: 11px; margin-top: 0; margin-bottom: 12px;'>实时采集弹幕与主播语音，LLM生成评论自动发送</p>"
             f"<p style='margin-top: 12px;'>GitHub: <a href='https://github.com/atvkh/kuaishou-live-mate' style='color: #3b82f6; text-decoration: none;'>"
             f"github.com/atvkh/kuaishou-live-mate</a></p>"

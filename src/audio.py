@@ -64,6 +64,12 @@ class AudioTranscriber:
         self._running = False
         self._log_callback = None
 
+        # 简单VAD：基于能量阈值过滤静音段（零依赖，不需要额外模型）
+        # 直播场景背景噪音波动大，用动态阈值更稳：取最近N块的能量百分位
+        self.vad_enabled = config.get("vad_enabled", True)
+        self.vad_energy_threshold = config.get("vad_energy_threshold", 0.01)  # 默认0.01
+        self._recent_energies = []  # 最近N块的能量，用于动态调整
+
         # 说话人分离配置
         self.enable_diarization = config.get("enable_diarization", True)
         self.num_speakers = config.get("num_speakers", 2)
@@ -83,6 +89,47 @@ class AudioTranscriber:
     @staticmethod
     def is_ffmpeg_available():
         return shutil.which("ffmpeg") is not None
+
+    def _compute_rms(self, audio_np: np.ndarray) -> float:
+        """计算音频块的RMS能量"""
+        if len(audio_np) == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(audio_np ** 2)))
+
+    def _is_silence(self, audio_np: np.ndarray) -> bool:
+        """简单VAD：基于RMS能量判断是否为静音
+
+        策略：维护最近20块的能量历史，动态计算阈值
+        - 绝对阈值：低于 vad_energy_threshold 直接判定为静音
+        - 动态阈值：低于最近20块能量中位数的0.3倍也判定为静音
+        - 两者取较小值（更宽松，避免误杀小声说话）
+        """
+        if not self.vad_enabled:
+            return False
+
+        rms = self._compute_rms(audio_np)
+
+        # 更新能量历史
+        self._recent_energies.append(rms)
+        if len(self._recent_energies) > 20:
+            self._recent_energies.pop(0)
+
+        # 绝对阈值：极低能量直接判定静音
+        if rms < self.vad_energy_threshold:
+            return True
+
+        # 动态阈值：需要至少5个样本才计算
+        if len(self._recent_energies) >= 5:
+            sorted_e = sorted(self._recent_energies)
+            median = sorted_e[len(sorted_e) // 2]
+            # 低于中位数的0.3倍视为静音（相对安静段）
+            dynamic_threshold = median * 0.3
+            # 取绝对和动态阈值的较大值（更宽松）
+            effective_threshold = max(self.vad_energy_threshold, dynamic_threshold)
+            if rms < effective_threshold:
+                return True
+
+        return False
 
     def _load_model(self):
         if self.model is None:
@@ -260,6 +307,10 @@ class AudioTranscriber:
     def _transcribe_with_diarization(self, audio_np: np.ndarray) -> str:
         """带说话人分离的转录"""
         try:
+            # VAD：静音段直接跳过，不送给模型（减少乱码误识别）
+            if self._is_silence(audio_np):
+                return ""
+
             # SenseVoiceSmall 转录
             results = self.model(audio_np, language=self.language, use_itn=True)
             if not results:
