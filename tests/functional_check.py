@@ -940,8 +940,8 @@ def check_module_interfaces():
             _fail("AutoUpdater._compare_versions 测试失败", f"1.0.7 vs 1.0.6 应返回 >0，实际 {result}")
 
         # 实例化测试
-        updater = AutoUpdater("atvkh/live-mate", "1.0.7")
-        if updater.api_url == "https://api.github.com/repos/atvkh/live-mate/releases/latest":
+        updater = AutoUpdater("atvkh/kuaishou-live-mate", "1.0.7")
+        if updater.api_url == "https://api.github.com/repos/atvkh/kuaishou-live-mate/releases/latest":
             _pass("AutoUpdater API URL 正确")
         else:
             _fail("AutoUpdater API URL 错误", updater.api_url)

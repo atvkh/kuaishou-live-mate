@@ -6,8 +6,8 @@
 
 ### 直播间 AI 互动助手（快手 + 抖音）
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/atvkh/live-mate/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/atvkh/live-mate/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10--3.12-yellow.svg)](https://www.python.org/)
 
@@ -38,7 +38,7 @@
 
 ### 普通用户（推荐）
 
-1. 前往 [Releases](https://github.com/atvkh/live-mate/releases) 下载最新版安装包
+1. 前往 [Releases](https://github.com/atvkh/kuaishou-live-mate/releases) 下载最新版安装包
 2. 双击安装
 3. 启动后按新手引导填写 API Key
 
@@ -47,7 +47,7 @@
 ### 开发者
 
 ```bash
-git clone https://github.com/atvkh/live-mate.git
+git clone https://github.com/atvkh/kuaishou-live-mate.git
 cd live-mate
 pip install -r requirements.txt
 playwright install chromium
@@ -134,7 +134,7 @@ sender:
 ## 📁 项目结构
 
 ```
-live-mate/
+kuaishou-live-mate/
 ├── main.py                  # 入口
 ├── config.example.yaml      # 配置模板
 ├── installer.iss            # Inno Setup 脚本

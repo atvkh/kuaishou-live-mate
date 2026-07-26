@@ -5,7 +5,7 @@
 #define MyAppName "旁白"
 #define MyAppVersion "1.1.0"
 #define MyAppPublisher "atvkh"
-#define MyAppURL "https://github.com/atvkh/live-mate"
+#define MyAppURL "https://github.com/atvkh/kuaishou-live-mate"
 #define MyAppExeName "旁白.exe"
 
 [Setup]
