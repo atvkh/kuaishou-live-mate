@@ -2311,7 +2311,7 @@ class MainWindow(QMainWindow):
         try:
             from src.updater import AutoUpdater
 
-            updater = AutoUpdater("atvkh/kuaishou-live-mate", __version__)
+            updater = AutoUpdater("atvkh/live-mate", __version__)
 
             class UpdateCheckWorker(QObject):
                 done = pyqtSignal(dict)
@@ -2420,7 +2420,7 @@ class MainWindow(QMainWindow):
             return
 
         from src.updater import AutoUpdater
-        updater = AutoUpdater("atvkh/kuaishou-live-mate", __version__)
+        updater = AutoUpdater("atvkh/live-mate", __version__)
 
         progress = QProgressDialog("正在下载更新...", "取消", 0, 100, self)
         progress.setWindowTitle("更新")
@@ -2463,7 +2463,7 @@ class MainWindow(QMainWindow):
         )
 
         from src.updater import AutoUpdater
-        updater = AutoUpdater("atvkh/kuaishou-live-mate", __version__)
+        updater = AutoUpdater("atvkh/live-mate", __version__)
         updater.install_and_restart(installer_path)
 
     def _show_about(self):
@@ -2481,8 +2481,8 @@ class MainWindow(QMainWindow):
             f"<h3 style='margin-bottom: 4px;'>旁白 v{__version__}</h3>"
             f"<p style='color: #4b5563; margin-top: 0; margin-bottom: 2px;'>直播间 AI 互动助手（快手 / 抖音）</p>"
             f"<p style='color: #6b7280; font-size: 11px; margin-top: 0; margin-bottom: 12px;'>实时采集弹幕与主播语音，LLM生成评论自动发送</p>"
-            f"<p style='margin-top: 12px;'>GitHub: <a href='https://github.com/atvkh/kuaishou-live-mate' style='color: #3b82f6; text-decoration: none;'>"
-            f"github.com/atvkh/kuaishou-live-mate</a></p>"
+            f"<p style='margin-top: 12px;'>GitHub: <a href='https://github.com/atvkh/live-mate' style='color: #3b82f6; text-decoration: none;'>"
+            f"github.com/atvkh/live-mate</a></p>"
             f"</div>"
         )
 
