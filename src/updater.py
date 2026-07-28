@@ -42,7 +42,7 @@ class AutoUpdater:
             req = urllib.request.Request(
                 self.api_url,
                 headers={
-                    "User-Agent": "旁白-Updater",
+                    "User-Agent": "LiveCompanion-Updater/1.0",
                     "Accept": "application/vnd.github.v3+json",
                 },
             )
@@ -89,7 +89,7 @@ class AutoUpdater:
             tmp_dir = Path(os.environ.get("TEMP", str(Path.home())))
             installer_path = tmp_dir / "旁白_Setup.exe"
 
-            req = urllib.request.Request(url, headers={"User-Agent": "旁白-Updater"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LiveCompanion-Updater/1.0"})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
