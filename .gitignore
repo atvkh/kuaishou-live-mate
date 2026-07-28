@@ -51,3 +51,14 @@ scripts/
 
 # ===== 抓包报告（含敏感请求信息）=====
 douyin_capture_report.txt
+douyin_like_verify_report.txt
+like_capture_report.txt
+like_verify*.txt
+
+# ===== 反编译/APK 分析产物（体积大，不进仓库）=====
+.dbg/
+快手极速最新安装包*/
+*_apk_output/
+
+# ===== 安装包（本地编译产物）=====
+*.exe

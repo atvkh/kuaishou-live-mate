@@ -23,6 +23,19 @@ class CommentSender:
         self._debug_logged = False  # 只打印一次调试信息
         self._on_status = None  # GUI 状态回调（由 engine 注入）
 
+        # 点赞限流状态
+        self._last_like_time = 0.0
+        self._like_count = 0
+        self._like_fail_streak = 0  # 连续失败次数
+        # 抓包确认：快手客户端点赞间隔 ~2 秒，count=1
+        # 这里放宽到 3 秒，保守起见；连续失败后自动退避
+        self.like_min_interval = config.get("like_min_interval", 3.0)
+        self.like_max_interval = config.get("like_max_interval", 6.0)
+        self.like_count_per_call = config.get("like_count_per_call", 1)
+        self.like_max_fail_streak = config.get("like_max_fail_streak", 5)
+        # 直播流 URL（由 core 注入，用于提取 liveStreamId）
+        self.stream_url: str = ""
+
     def set_status_callback(self, cb):
         """注入 GUI 状态回调，让调试日志能在 GUI 状态栏显示"""
         self._on_status = cb
@@ -418,3 +431,90 @@ class CommentSender:
     @property
     def comment_count(self) -> int:
         return self._comment_count
+
+    @property
+    def like_count(self) -> int:
+        return self._like_count
+
+    def set_stream_url(self, stream_url: str):
+        """由 core 注入最新直播流 URL（用于提取 liveStreamId 点赞）"""
+        self.stream_url = stream_url or ""
+
+    def _extract_live_stream_id(self) -> str:
+        """从当前 stream_url 提取 liveStreamId（委托给 platform 的静态方法）"""
+        if not self.stream_url or not self.platform:
+            return ""
+        # 快手平台提供 extract_live_stream_id 静态方法
+        extractor = getattr(self.platform, "extract_live_stream_id", None)
+        if extractor:
+            try:
+                return extractor(self.stream_url)
+            except Exception:
+                return ""
+        return ""
+
+    async def send_like(self, count: int = None) -> bool:
+        """发送一次点赞（双击 video 触发前端点赞流程）
+
+        限流策略：
+        1. 距离上次点赞至少 like_min_interval 秒，否则跳过
+        2. 连续失败 like_max_fail_streak 次后，自动退避（间隔翻倍至上限）
+        3. 双击方式 count 固定为 1（前端每次双击只发 1 次请求）
+
+        Args:
+            count: 未使用（双击方式固定 count=1），保留参数兼容
+        Returns:
+            是否发送成功
+        """
+        if not self.platform or not hasattr(self.platform, "send_like"):
+            self._log("当前平台不支持点赞")
+            return False
+
+        # 连续失败上限：停止点赞
+        if self._like_fail_streak >= self.like_max_fail_streak:
+            self._log(f"点赞已自动暂停（连续失败 {self._like_fail_streak} 次）")
+            return False
+
+        # 限流检查
+        now = asyncio.get_event_loop().time()
+        elapsed = now - self._last_like_time
+        # 连续失败后退避：间隔 = base * 2^fail_streak，封顶到 like_max_interval
+        backoff = min(
+            self.like_max_interval,
+            self.like_min_interval * (2 ** self._like_fail_streak)
+        )
+        min_interval = max(self.like_min_interval, backoff)
+        if elapsed < min_interval:
+            wait_left = min_interval - elapsed
+            self._log(f"点赞限流：还需等 {wait_left:.1f}s（失败连续 {self._like_fail_streak} 次）")
+            return False
+
+        # 调用 platform 的点赞方法（快手走双击 video）
+        try:
+            ok, detail = await self.platform.send_like(self.page, "", 1)
+        except Exception as e:
+            self._log(f"点赞异常: {e}")
+            self._like_fail_streak += 1
+            return False
+
+        self._last_like_time = asyncio.get_event_loop().time()
+
+        if ok:
+            self._like_count += 1
+            self._like_fail_streak = 0
+            debug = detail.get("debug_info", "") if isinstance(detail, dict) else ""
+            self._log(f"点赞成功 +1（累计 {self._like_count}）" + (f" [{debug}]" if debug else ""))
+            return True
+        else:
+            self._like_fail_streak += 1
+            err_parts = []
+            if isinstance(detail, dict):
+                if detail.get("error"):
+                    err_parts.append(detail["error"])
+                if detail.get("status_msg"):
+                    err_parts.append(detail["status_msg"])
+            err_str = ", ".join(err_parts) or "未知错误"
+            self._log(f"点赞失败（连续 {self._like_fail_streak} 次）: {err_str}")
+            if self._like_fail_streak >= self.like_max_fail_streak:
+                self._log(f"点赞连续失败 {self._like_fail_streak} 次，自动暂停")
+            return False

@@ -427,13 +427,23 @@ class LiveCompanionEngine:
                 self._page, self.config.get("sender", {}), self.platform
             )
             self._sender.set_status_callback(self._emit_status)
+            # 把 stream_url 注入给 sender，点赞时用于提取 liveStreamId
+            self._sender.set_stream_url(self._stream_url or "")
 
             # 副账号：只保留 sender，不启动转录/弹幕/LLM/评论循环
             if self.role == "slave":
                 self._emit_status(f"[{self.engine_id}] 副账号已就绪（仅发送模式）")
-                # 副账号只需保持浏览器打开等待评论分配
-                while self.is_running:
-                    await asyncio.sleep(5)
+                # 副账号也启动自动点赞（如果配置开启）
+                slave_tasks = []
+                if self.config.get("sender", {}).get("like_enabled", True):
+                    slave_tasks.append(asyncio.create_task(self._run_like_loop()))
+                    self._emit_status(f"[{self.engine_id}] 副账号自动点赞已启动")
+                if slave_tasks:
+                    await asyncio.gather(*slave_tasks)
+                else:
+                    # 没有任务，保持浏览器打开等待评论分配
+                    while self.is_running:
+                        await asyncio.sleep(5)
                 return
 
             self._transcriber = AudioTranscriber(
@@ -453,6 +463,11 @@ class LiveCompanionEngine:
 
             tasks.append(asyncio.create_task(self._run_audio()))
             tasks.append(asyncio.create_task(self._run_comment_loop()))
+
+            # 自动点赞任务（默认开启，可由配置 sender.like_enabled 关闭）
+            if self.config.get("sender", {}).get("like_enabled", True):
+                tasks.append(asyncio.create_task(self._run_like_loop()))
+                self._emit_status("自动点赞已启动")
 
             self._emit_status("运行中")
 
@@ -583,6 +598,9 @@ class LiveCompanionEngine:
                     self._emit_status(f"监听到新直播流: {url[:80]}...")
                     latest_stream["url"] = url
                     self._stream_url = url
+                    # 同步到 sender，点赞时用于提取 liveStreamId
+                    if self._sender:
+                        self._sender.set_stream_url(url)
             except Exception:
                 pass
 
@@ -594,6 +612,9 @@ class LiveCompanionEngine:
                 self._emit_status(f"监听到新直播流请求: {url[:80]}...")
                 latest_stream["url"] = url
                 self._stream_url = url
+                # 同步到 sender，点赞时用于提取 liveStreamId
+                if self._sender:
+                    self._sender.set_stream_url(url)
 
         if self._page:
             self._page.on("response", handle_response)
@@ -607,6 +628,9 @@ class LiveCompanionEngine:
                     if probed_url:
                         latest_stream["url"] = probed_url
                         self._stream_url = probed_url
+                        # 同步到 sender，点赞时用于提取 liveStreamId
+                        if self._sender:
+                            self._sender.set_stream_url(probed_url)
                         self._emit_status(f"已从页面资源补获直播流: {probed_url[:80]}...")
                         continue
                     # 打印页面URL帮助调试
@@ -987,13 +1011,29 @@ class LiveCompanionEngine:
                 return ""
             if not re.search(r"[\u4e00-\u9fff]", text):
                 return ""
+            # 最小长度校验：少于 2 字的通常是残缺片段（如"再"、"的"）
+            if len(text) < 2:
+                return ""
             return text[:15]
 
         def parse_vision_response(msg) -> str:
-            """解析视觉模型响应，兼容多种格式。"""
+            """解析视觉模型响应，兼容多种格式。
+
+            思考模型（thinking）的 content 可能是推理过程末尾的残缺片段，
+            若清洗后过短（<2字）则回退到 reasoning_content 再清洗一次。
+            """
             content = msg.content or ""
             rc = getattr(msg, "reasoning_content", "") or ""
-            return clean_vision_summary(content) or clean_vision_summary(rc)
+            # 先用 content，过短则回退到 reasoning_content
+            result = clean_vision_summary(content)
+            if len(result) >= 2:
+                return result
+            # content 清洗后过短，尝试 reasoning_content
+            rc_result = clean_vision_summary(rc)
+            if len(rc_result) >= 2:
+                return rc_result
+            # 两个都过短，返回较长的那个（可能都是空）
+            return result or rc_result
 
         # 需要开启 thinking 参数的模型（思考模型列表，content字段可能为空或包含思考过程）
         thinking_models = {"glm-4.1v-thinking-flash", "glm-4.5v", "glm-4.5v-flash"}
@@ -1209,4 +1249,59 @@ class LiveCompanionEngine:
             return success
         except Exception as e:
             self._emit_error(f"[{self.engine_id}] 发送评论失败: {e}")
+            return False
+
+    async def _run_like_loop(self):
+        """自动点赞循环任务
+
+        - 进直播间后等 2 秒让 video 元素加载
+        - 按 sender.like_interval（默认 5 秒）周期调用 send_like
+        - 连续失败 5 次自动停止（由 sender 内部逻辑处理）
+        - 退出直播间/停止引擎时自动结束
+        """
+        # 等 2 秒让 video 元素完全加载
+        await asyncio.sleep(2)
+
+        # 点赞间隔（秒），默认 3 秒（抖音响应快 2 秒内，快手抓包确认客户端 ~2 秒）
+        interval = self.config.get("sender", {}).get("like_interval", 3)
+        try:
+            interval = max(2, float(interval))
+        except Exception:
+            interval = 3
+
+        self._emit_status(f"自动点赞循环启动，间隔 {interval:.0f} 秒")
+
+        while self.is_running:
+            try:
+                if not self.is_ready_to_send():
+                    await asyncio.sleep(5)
+                    continue
+
+                # 检查是否还在直播间（避免在主页/跳转后点赞）
+                import re as _re
+                if not _re.search(self.platform.room_url_pattern, self._page.url):
+                    await asyncio.sleep(5)
+                    continue
+
+                await self._sender.send_like(1)
+            except Exception as e:
+                self._emit_error(f"点赞循环异常: {e}")
+
+            await asyncio.sleep(interval)
+
+    async def send_like_direct(self, count: int = None) -> bool:
+        """供 EngineManager / GUI 调用，发送一次点赞
+
+        Args:
+            count: 单次点赞次数（None 用配置默认值，限制 1-5）
+        Returns:
+            是否发送成功
+        """
+        if not self.is_ready_to_send():
+            return False
+        try:
+            success = await self._sender.send_like(count)
+            return success
+        except Exception as e:
+            self._emit_error(f"[{self.engine_id}] 点赞失败: {e}")
             return False

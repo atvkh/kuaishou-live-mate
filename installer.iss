@@ -3,7 +3,7 @@
 ; 输出: dist/旁白_Setup_v1.0.0.exe
 
 #define MyAppName "旁白"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "atvkh"
 #define MyAppURL "https://github.com/atvkh/kuaishou-live-mate"
 #define MyAppExeName "旁白.exe"

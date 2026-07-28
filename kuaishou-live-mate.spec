@@ -58,6 +58,13 @@ a = Analysis(
         'sklearn',
         'sklearn.cluster',
         'urllib.request',
+        # v1.1.0 新增：平台抽象层
+        'src.platforms',
+        'src.platforms.base',
+        'src.platforms.kuaishou',
+        'src.platforms.douyin',
+        'src.platforms.registry',
+        'src.engine_manager',
     ],
     hookspath=[],
     hooksconfig={},

@@ -6,7 +6,7 @@
 
 ### 直播间 AI 互动助手（快手 + 抖音）
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/atvkh/kuaishou-live-mate/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10--3.12-yellow.svg)](https://www.python.org/)
@@ -27,8 +27,9 @@
 | **弹幕采集** | WebSocket 拦截 + Protobuf 解析，双方案兜底（Playwright 原生事件 + JS 注入 Hook） |
 | **语音转录** | SenseVoiceSmall ONNX，中文准确率 90%+，5-15x 快于 Whisper，VAD 静音检测 + 自动过滤背景音乐 |
 | **画面识别** | 进入直播间自动截图，视觉模型识别直播类型，注入 LLM 提示词 |
-| **多模型回退** | 视觉模型优先级队列：`glm-4.6v-flash` → `glm-4.1v-thinking-flash` → `glm-4v-flash`，429 限流自动切换 |
+| **多模型回退** | 视觉模型优先级队列：`glm-4.6v-flash` → `glm-4.1v-thinking-flash` → `glm-4v-flash`，429 限流自动切换，思考模型输出过短自动跳过 |
 | **拟人化评论** | 15% 水弹幕、随机长度分布、30% 语气词后缀、评论去重 |
+| **自动点赞** | 进入直播间自动双击 video 元素触发点赞，默认开启，快手 5 秒/抖音 3 秒间隔，连续失败自动暂停 |
 | **自动发送** | 抖音 fetch API 直接发送（无需 DOM 操作），快手 Playwright 定位输入框 |
 | **悬浮舱** | 启动后自动切换迷你悬浮窗，实时显示状态 |
 | **新手引导** | 首次启动配置向导 |
@@ -84,6 +85,10 @@ sender:
   min_interval: 20                             # 不要低于 15，避免风控
   max_interval: 50
   max_length: 20
+
+like:
+  enabled: true                                # 进入直播间自动点赞
+  interval: 5                                  # 快手默认 5 秒，抖音默认 3 秒
 ```
 
 **API Key 获取**：[阿里云百炼](https://bailian.console.aliyun.com/) · [智谱 AI](https://open.bigmodel.cn/)

@@ -176,3 +176,50 @@ class KuaishouPlatform(Platform):
             'textarea[placeholder]',
             'input[placeholder]',
         ]
+
+    @staticmethod
+    def extract_live_stream_id(stream_url: str) -> str:
+        """从快手直播流 URL 提取 liveStreamId
+
+        抓包确认流 URL 格式：
+            https://tx-origin.pull.yximgs.com/gifshow/{liveStreamId}_{quality}.flv?txSecret=...
+        例：/gifshow/SSvKPyY5DMM_GameAvcFhdL3.flv  ->  SSvKPyY5DMM
+        """
+        if not stream_url:
+            return ""
+        import re
+        # 匹配 /gifshow/{id}_{quality}.flv
+        m = re.search(r"/gifshow/([A-Za-z0-9_-]+?)_[A-Za-z0-9_-]+\.flv", stream_url)
+        if m:
+            return m.group(1)
+        # 兜底：取 /gifshow/ 后第一段（截到 .flv 或 _）
+        m = re.search(r"/gifshow/([A-Za-z0-9_-]+?)(?:\.flv|_)", stream_url)
+        if m:
+            return m.group(1)
+        return ""
+
+    async def send_like(self, page, live_stream_id: str = "", count: int = 1) -> tuple[bool, dict]:
+        """快手点赞：双击 video 元素触发前端点赞流程
+
+        实测方案（v9 测试 10/10 成功）：
+        - page.dblclick('video') 模拟双击直播画面
+        - 前端事件处理器自动发 POST /live_api/liveroom/like
+        - 浏览器拦截器自动加 __NS_hxfalcon 签名（isTrusted=true）
+        - 响应 {"data":true} 表示成功
+
+        为什么不用 page.evaluate(fetch(...))：
+        - 脚本发起的 fetch 不会被前端拦截器加签名
+        - 服务端返回 200 {"data":true} 但实际不计数（假成功）
+
+        Args:
+            page: Playwright Page（必须已进入直播间）
+            live_stream_id: 未使用（前端自己知道）
+            count: 未使用（每次双击只发 1 次点赞请求）
+        Returns:
+            (ok, detail)
+        """
+        try:
+            await page.dblclick('video', timeout=5000, force=True)
+            return True, {"method": "dblclick", "debug_info": "video double-clicked"}
+        except Exception as e:
+            return False, {"error": f"exception:{e}"}

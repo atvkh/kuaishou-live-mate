@@ -131,3 +131,19 @@ class Platform(ABC):
             ack payload bytes，None 表示不需要
         """
         return None
+
+    async def send_like(self, page, live_stream_id: str = "", count: int = 1) -> tuple[bool, dict]:
+        """发送一次点赞（可选，子类按需覆盖）
+
+        推荐实现方式：DOM 点击点赞按钮（让前端自己发带签名的请求）。
+        不推荐 page.evaluate(fetch(...))，因为前端拦截器不会给脚本发起的
+        fetch 请求加 __NS_hxfalcon 签名，导致服务端假成功。
+
+        Args:
+            page: Playwright Page 实例（必须已进入直播间）
+            live_stream_id: 直播流 ID（部分平台可能不需要）
+            count: 点赞次数（默认 1）
+        Returns:
+            (ok, detail) detail 含 status_code / error / debug_info 等字段
+        """
+        return False, {"error": "not_implemented"}

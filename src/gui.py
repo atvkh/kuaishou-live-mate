@@ -751,7 +751,67 @@ class LogViewerDialog(QDialog):
 
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setStyleSheet("background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; color: #374151; font-size: 12px; font-family: Consolas, monospace;")
+        self.log_view.setStyleSheet("""
+            QTextEdit {
+                background-color: #f9fafb;
+                border: 1px solid #e5e7eb;
+                border-radius: 6px;
+                padding: 12px;
+                color: #374151;
+                font-size: 12px;
+                font-family: Consolas, monospace;
+            }
+            QScrollBar:vertical {
+                background-color: #f3f4f6;
+                width: 12px;
+                border: none;
+                border-radius: 6px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #9ca3af;
+                border-radius: 6px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #6b7280;
+            }
+            QScrollBar::handle:vertical:pressed {
+                background-color: #4b5563;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
+                background: none;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar:horizontal {
+                background-color: #f3f4f6;
+                height: 12px;
+                border: none;
+                border-radius: 6px;
+                margin: 2px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #9ca3af;
+                border-radius: 6px;
+                min-width: 30px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background-color: #6b7280;
+            }
+            QScrollBar::handle:horizontal:pressed {
+                background-color: #4b5563;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0;
+                background: none;
+            }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+        """)
         if log_entries:
             for ts, text, color in log_entries:
                 self.add_log(ts, text, color)
@@ -1226,6 +1286,22 @@ class SettingsDialog(QDialog):
         ai_suffix_row.addStretch()
         sender_layout.addRow("", ai_suffix_row)
 
+        # 自动点赞开关 + 间隔配置
+        like_row = QHBoxLayout()
+        self.like_enabled_check = ToggleSwitch("启用自动点赞")
+        self.like_enabled_check.setChecked(True)  # 默认开启
+        like_row.addWidget(self.like_enabled_check)
+        like_row.addSpacing(10)
+        like_row.addWidget(QLabel("间隔:"))
+        self.like_interval_spin = QSpinBox()
+        self.like_interval_spin.setRange(2, 60)
+        self.like_interval_spin.setSuffix(" 秒")
+        self.like_interval_spin.setFixedWidth(100)
+        self.like_interval_spin.setValue(5)  # 默认 5 秒
+        like_row.addWidget(self.like_interval_spin)
+        like_row.addStretch()
+        sender_layout.addRow("", like_row)
+
         sender_group.setLayout(sender_layout)
         tab2_layout.addWidget(sender_group)
         
@@ -1511,6 +1587,9 @@ class SettingsDialog(QDialog):
         # AI 后缀
         self.ai_suffix_check.setChecked(sender.get("ai_suffix", False))
         self.suffix_text_input.setText(sender.get("suffix_text", "[AI]"))
+        # 自动点赞
+        self.like_enabled_check.setChecked(sender.get("like_enabled", True))
+        self.like_interval_spin.setValue(int(sender.get("like_interval", 5)))
 
         # 多账号列表
         self.accounts_list.clear()
@@ -1591,6 +1670,8 @@ class SettingsDialog(QDialog):
             "max_length": self.max_length_spin.value(),
             "ai_suffix": self.ai_suffix_check.isChecked(),
             "suffix_text": self.suffix_text_input.text().strip() or "[AI]",
+            "like_enabled": self.like_enabled_check.isChecked(),
+            "like_interval": self.like_interval_spin.value(),
         }
         # 多账号：先回写当前编辑中的条目，再收集全部
         self._sync_current_account()

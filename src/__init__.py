@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 # 版本号（语义化版本，每次发版修改此处）
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 # 应用根目录：exe模式下用exe所在目录，脚本模式下用项目根目录
 if getattr(sys, 'frozen', False):

@@ -712,3 +712,27 @@ class DouyinPlatform(Platform):
         except Exception as e:
             print(f"[DouyinPlatform] send_comment_via_fetch 异常: {e}")
             return False
+
+    async def send_like(self, page, live_stream_id: str = "", count: int = 1) -> tuple[bool, dict]:
+        """抖音点赞：双击 video 元素触发前端点赞流程
+
+        实测方案（douyin_like_verify_report.txt 验证 10/10 成功）：
+        - page.dblclick('video') 模拟双击直播画面
+        - 前端事件处理器自动发 POST /webcast/room/like/
+        - 浏览器拦截器自动加 msToken + a_bogus 签名
+        - 响应 {"status_code":0} 表示成功
+
+        与快手方案完全一致：双击 video → 前端自动加签 → 真实生效。
+
+        Args:
+            page: Playwright Page（必须已进入直播间）
+            live_stream_id: 未使用（前端自己知道 room_id）
+            count: 未使用（每次双击只发 1 次点赞请求）
+        Returns:
+            (ok, detail)
+        """
+        try:
+            await page.dblclick('video', timeout=5000, force=True)
+            return True, {"method": "dblclick", "debug_info": "video double-clicked"}
+        except Exception as e:
+            return False, {"error": f"exception:{e}"}
