@@ -117,24 +117,21 @@ class EngineManager:
             return success
 
     async def stop(self):
-        """停止所有引擎：先关各 context，再关共享 browser"""
+        """停止所有引擎：并发关各 context，再关共享 browser"""
         self.is_running = False
-        # 先停所有 engine（它们会各自关闭自己的 context）
-        for e in self.engines:
-            try:
-                await e.stop()
-            except Exception:
-                pass
-        # 再关共享 browser 和 playwright
+        # 并发停所有 engine（各自关闭自己的 context），耗时从 N×单账号 降为 单账号
+        if self.engines:
+            await asyncio.gather(*[e.stop() for e in self.engines], return_exceptions=True)
+        # 再关共享 browser 和 playwright（各加 3 秒超时保护）
         if self._browser:
             try:
-                await self._browser.close()
-            except Exception:
+                await asyncio.wait_for(self._browser.close(), timeout=3)
+            except (asyncio.TimeoutError, Exception):
                 pass
         if self._playwright:
             try:
-                await self._playwright.stop()
-            except Exception:
+                await asyncio.wait_for(self._playwright.stop(), timeout=3)
+            except (asyncio.TimeoutError, Exception):
                 pass
 
     # ===== 回调转发 =====

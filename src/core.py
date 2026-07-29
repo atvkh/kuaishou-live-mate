@@ -447,7 +447,8 @@ class LiveCompanionEngine:
                 return
 
             self._transcriber = AudioTranscriber(
-                self.config.get("audio", {})
+                self.config.get("audio", {}),
+                referer_url=self.platform.home_url
             )
             # 如果 EngineManager 已注入共用 LLM，则不再创建
             if self._llm is None:
@@ -462,7 +463,9 @@ class LiveCompanionEngine:
                 tasks.append(asyncio.create_task(self._run_danmu()))
 
             tasks.append(asyncio.create_task(self._run_audio()))
-            tasks.append(asyncio.create_task(self._run_comment_loop()))
+            # AI评论生成（默认开启，可由配置 sender.comment_enabled 关闭）
+            if self.config.get("sender", {}).get("comment_enabled", True):
+                tasks.append(asyncio.create_task(self._run_comment_loop()))
 
             # 自动点赞任务（默认开启，可由配置 sender.like_enabled 关闭）
             if self.config.get("sender", {}).get("like_enabled", True):
@@ -745,6 +748,9 @@ class LiveCompanionEngine:
                     self._llm.max_tokens = dynamic_max_tokens
 
                     # LLM生成评论
+                    # 调用前再检查一次 is_running，确保停止时尽快退出（LLM 有 30s 超时）
+                    if not self.is_running:
+                        break
                     self._emit_status("正在生成评论...")
                     comment = await asyncio.to_thread(
                         self._llm.generate_comment, context, danmu_context, recent_comments
@@ -1203,22 +1209,23 @@ class LiveCompanionEngine:
             self._danmu_reader.stop()
 
         # 共享浏览器模式下，只关自己的 context，不关 browser（browser 由 EngineManager 统一关闭）
+        # 各资源关闭加 3 秒超时，避免单个资源卡死拖垮整个停止流程
         if self._context:
             try:
-                await self._context.close()
-            except Exception:
+                await asyncio.wait_for(self._context.close(), timeout=3)
+            except (asyncio.TimeoutError, Exception):
                 pass
 
         if self._owns_browser and self._browser:
             try:
-                await self._browser.close()
-            except Exception:
+                await asyncio.wait_for(self._browser.close(), timeout=3)
+            except (asyncio.TimeoutError, Exception):
                 pass
 
         if self._owns_browser and self._playwright:
             try:
-                await self._playwright.stop()
-            except Exception:
+                await asyncio.wait_for(self._playwright.stop(), timeout=3)
+            except (asyncio.TimeoutError, Exception):
                 pass
 
         self._emit_status("已停止")

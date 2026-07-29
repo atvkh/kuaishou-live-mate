@@ -42,6 +42,8 @@ class LLMClient:
         )
         self.temperature = config.get("temperature", 0.9)
         self.max_tokens = config.get("max_tokens", 50)
+        # 请求超时（秒），避免 LLM 服务挂起时阻塞停止流程（OpenAI SDK 默认 600s 过长）
+        self.timeout = config.get("timeout", 30)
         self.conversation_history = []
 
     def generate_comment(self, context: str, danmu_context: str = "", recent_comments: list = None) -> str:
@@ -72,6 +74,7 @@ class LLMClient:
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                timeout=self.timeout,
             )
             comment = response.choices[0].message.content.strip()
 

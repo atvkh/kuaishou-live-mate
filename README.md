@@ -28,7 +28,7 @@
 | **语音转录** | SenseVoiceSmall ONNX，中文准确率 90%+，5-15x 快于 Whisper，VAD 静音检测 + 自动过滤背景音乐 |
 | **画面识别** | 进入直播间自动截图，视觉模型识别直播类型，注入 LLM 提示词 |
 | **多模型回退** | 视觉模型优先级队列：`glm-4.6v-flash` → `glm-4.1v-thinking-flash` → `glm-4v-flash`，429 限流自动切换，思考模型输出过短自动跳过 |
-| **拟人化评论** | 15% 水弹幕、随机长度分布、30% 语气词后缀、评论去重 |
+| **拟人化评论** | 15% 水弹幕、随机长度分布、30% 语气词后缀、评论去重，可在设置中开关 |
 | **自动点赞** | 进入直播间自动双击 video 元素触发点赞，默认开启，快手 5 秒/抖音 3 秒间隔，连续失败自动暂停 |
 | **自动发送** | 抖音 fetch API 直接发送（无需 DOM 操作），快手 Playwright 定位输入框 |
 | **悬浮舱** | 启动后自动切换迷你悬浮窗，实时显示状态 |
@@ -89,6 +89,9 @@ sender:
 like:
   enabled: true                                # 进入直播间自动点赞
   interval: 5                                  # 快手默认 5 秒，抖音默认 3 秒
+
+sender:
+  comment_enabled: true                        # 启用 AI 评论生成（关闭后仅采集+点赞）
 ```
 
 **API Key 获取**：[阿里云百炼](https://bailian.console.aliyun.com/) · [智谱 AI](https://open.bigmodel.cn/)

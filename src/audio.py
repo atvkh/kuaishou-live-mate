@@ -25,15 +25,29 @@ def _get_model_dir() -> str:
         ".cache", "modelscope", "models",
         "manyeyes--sensevoice-small-onnx", "snapshots", "master"
     )
-    if os.path.exists(os.path.join(cache_dir, "model.onnx")):
-        return cache_dir
+    # 检查目录下是否存在任意 .onnx 文件（model.onnx 或 model_quant.onnx 等）
+    if os.path.isdir(cache_dir):
+        for f in os.listdir(cache_dir):
+            if f.endswith(".onnx"):
+                return cache_dir
     # 2. 打包环境：exe同目录下的 models/sensevoice
     exe_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') else os.getcwd()
     bundled = os.path.join(exe_dir, "models", "sensevoice")
-    if os.path.exists(os.path.join(bundled, "model.onnx")):
-        return bundled
+    if os.path.isdir(bundled):
+        for f in os.listdir(bundled):
+            if f.endswith(".onnx"):
+                return bundled
     # 3. 默认返回 modelscope ID（首次会自动下载，但需要 funasr 导出 onnx）
     return "manyeyes/sensevoice-small-onnx"
+
+
+def _is_model_dir_valid(model_dir: str) -> bool:
+    """检查模型目录是否包含 onnx 文件（区分本地路径和 modelscope ID）"""
+    if model_dir.startswith("manyeyes/") or model_dir.startswith("iic/"):
+        return False  # modelscope ID，需要在线下载
+    return os.path.isdir(model_dir) and any(
+        f.endswith(".onnx") for f in os.listdir(model_dir)
+    )
 
 
 def _clean_sensevoice_output(text: str) -> str:
@@ -54,7 +68,7 @@ def _is_music_or_noise(text: str) -> bool:
 
 
 class AudioTranscriber:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, referer_url: str = "https://live.kuaishou.com"):
         self.model_name = config.get("whisper_model", "sensevoice-small")  # 保留key兼容
         self.language = config.get("language", "zh")
         self.segment_length = config.get("segment_length", 8)
@@ -63,6 +77,8 @@ class AudioTranscriber:
         self._process = None
         self._running = False
         self._log_callback = None
+        # 直播流CDN需要正确的Referer，否则会拒绝请求
+        self.referer_url = referer_url
 
         # 简单VAD：基于能量阈值过滤静音段（零依赖，不需要额外模型）
         # 直播场景背景噪音波动大，用动态阈值更稳：取最近N块的能量百分位
@@ -135,6 +151,8 @@ class AudioTranscriber:
         if self.model is None:
             model_dir = _get_model_dir()
             self._log(f"正在加载 SenseVoiceSmall 模型: {model_dir}")
+            if not _is_model_dir_valid(model_dir):
+                self._log("警告：本地未找到 ONNX 模型文件，将尝试从 ModelScope 在线下载（可能较慢）...")
             self.model = SenseVoiceSmall(model_dir, quantize=False)
             self._log("SenseVoiceSmall 模型加载完成")
 
@@ -168,7 +186,7 @@ class AudioTranscriber:
         headers = ""
         if cookie_str:
             headers += f"Cookie: {cookie_str}\r\n"
-        headers += f"Referer: https://live.kuaishou.com\r\n"
+        headers += f"Referer: {self.referer_url}\r\n"
         headers += "User-Agent: Mozilla/5.0\r\n"
         if headers:
             cmd += ["-headers", headers]
@@ -186,7 +204,7 @@ class AudioTranscriber:
         # 探测流信息
         probe_cmd = [
             "ffmpeg", "-hide_banner",
-            "-headers", f"Referer: https://live.kuaishou.com\r\nUser-Agent: Mozilla/5.0\r\n",
+            "-headers", f"Referer: {self.referer_url}\r\nUser-Agent: Mozilla/5.0\r\n",
             "-i", stream_url,
         ]
         try:

@@ -36,6 +36,7 @@ sender:
   suffix_text: '[AI]'        # 后缀内容（可自定义）
   like_enabled: true         # 启用自动点赞（双击 video 触发，默认开启）
   like_interval: 3           # 点赞间隔秒数（快手+抖音均验证通过，3 秒稳定）
+  comment_enabled: true      # 启用 AI 评论生成（关闭后仅采集+点赞，不生成评论）
 
 # 多账号配置（可选，不配置则单账号模式）
 # accounts:

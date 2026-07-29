@@ -312,6 +312,7 @@ class EngineWorker(QObject):
         self.manager = None       # 多账号模式下的 EngineManager
         self._loop = None
         self._stopping = False
+        self._stop_triggered = False  # 防止重复触发停止
 
     @pyqtSlot()
     def run(self):
@@ -389,16 +390,24 @@ class EngineWorker(QObject):
 
     def stop_engine(self):
         # 多账号模式：停 manager；单账号模式：停 engine
+        # 异步触发，不阻塞 GUI 主线程；引擎真正停止后由 run() 的 finally 发 stopped 信号
+        if self._stop_triggered:
+            return
         target = self.manager if self.manager else self.engine
         if target and self._loop and self._loop.is_running():
             self._stopping = True
-            future = asyncio.run_coroutine_threadsafe(
-                target.stop(), self._loop
-            )
-            try:
-                future.result(timeout=15)
-            except Exception:
-                pass
+            self._stop_triggered = True
+            asyncio.run_coroutine_threadsafe(target.stop(), self._loop)
+            # 兜底定时器：若 10 秒内 stopped 信号未发出（stop 协程卡死），
+            # 主动发 stopped 信号强制恢复 GUI，防止悬浮舱永远卡在"正在停止引擎..."
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(10000, self._force_stop_fallback)
+
+    def _force_stop_fallback(self):
+        """兜底：stop 协程未在超时内完成时强制通知 GUI"""
+        if self._stopping:
+            self._stopping = False
+            self.stopped.emit()
 
 
 class PromptEditDialog(QDialog):
@@ -1302,6 +1311,11 @@ class SettingsDialog(QDialog):
         like_row.addStretch()
         sender_layout.addRow("", like_row)
 
+        # AI评论生成开关
+        self.comment_enabled_check = ToggleSwitch("启用 AI 评论生成")
+        self.comment_enabled_check.setChecked(True)  # 默认开启
+        sender_layout.addRow("", self.comment_enabled_check)
+
         sender_group.setLayout(sender_layout)
         tab2_layout.addWidget(sender_group)
         
@@ -1590,6 +1604,8 @@ class SettingsDialog(QDialog):
         # 自动点赞
         self.like_enabled_check.setChecked(sender.get("like_enabled", True))
         self.like_interval_spin.setValue(int(sender.get("like_interval", 5)))
+        # AI评论生成
+        self.comment_enabled_check.setChecked(sender.get("comment_enabled", True))
 
         # 多账号列表
         self.accounts_list.clear()
@@ -1672,6 +1688,7 @@ class SettingsDialog(QDialog):
             "suffix_text": self.suffix_text_input.text().strip() or "[AI]",
             "like_enabled": self.like_enabled_check.isChecked(),
             "like_interval": self.like_interval_spin.value(),
+            "comment_enabled": self.comment_enabled_check.isChecked(),
         }
         # 多账号：先回写当前编辑中的条目，再收集全部
         self._sync_current_account()
@@ -2598,9 +2615,7 @@ class MainWindow(QMainWindow):
         self._log_dialog.activateWindow()
 
     def closeEvent(self, event):
+        # 触发停止（现已非阻塞），不等待引擎清理，让窗口立即关闭
         if self._worker:
             self._worker.stop_engine()
-            if self._thread:
-                self._thread.quit()
-                self._thread.wait(5000)
         event.accept()
