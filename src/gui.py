@@ -2295,22 +2295,25 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_engine_stopped(self):
-        if self._thread:
-            self._thread.quit()
-            self._thread.wait()
-        self._worker = None
-        self._thread = None
-
+        # 先恢复 UI（不等线程退出），避免 GUI 主线程被 wait() 阻塞导致悬浮舱卡住
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.settings_btn.setEnabled(True)
         self.mini_btn.setEnabled(False)
         self.custom_status.setText(f"旁白 v{__version__} | 就绪")
         self._append_log("引擎已停止", "#374151")
-        
+
         # 恢复大面板
         self.mini_companion.hide()
         self.show()
+
+        # 异步退出线程（带超时，不阻塞 GUI）
+        if self._thread:
+            self._thread.quit()
+            # wait 最多 2 秒，超时就放弃（线程资源会在进程退出时释放）
+            self._thread.wait(2000)
+        self._worker = None
+        self._thread = None
 
     @pyqtSlot(str)
     def _on_status(self, msg):

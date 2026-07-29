@@ -619,12 +619,54 @@ class LiveCompanionEngine:
                 if self._sender:
                     self._sender.set_stream_url(url)
 
-        if self._page:
-            self._page.on("response", handle_response)
-            self._page.on("request", handle_request)
+        # 当前注册监听器的 page（切换标签页时会更新）
+        monitored_page = self._page
+        if monitored_page:
+            monitored_page.on("response", handle_response)
+            monitored_page.on("request", handle_request)
+
+        # 跟踪标签页数量，用于检测新标签页打开
+        last_page_count = len(self._context.pages) if self._context else 1
 
         try:
             while self.is_running:
+                # ── 检测新标签页：抖音切换直播间可能通过 target=_blank 打开 ──
+                try:
+                    if self._context:
+                        pages = self._context.pages
+                        if len(pages) > last_page_count:
+                            last_page_count = len(pages)
+                            new_page = pages[-1]
+                            if new_page != monitored_page:
+                                # 移除旧 page 的监听器
+                                try:
+                                    monitored_page.remove_listener("response", handle_response)
+                                    monitored_page.remove_listener("request", handle_request)
+                                except Exception:
+                                    pass
+                                # 切换到新 page
+                                monitored_page = new_page
+                                self._page = new_page
+                                # 同步弹幕采集器和评论发送器的 page 引用
+                                if self._danmu_reader:
+                                    self._danmu_reader.page = new_page
+                                if self._sender:
+                                    self._sender.page = new_page
+                                # 注册监听器到新 page
+                                new_page.on("response", handle_response)
+                                new_page.on("request", handle_request)
+                                self._emit_status("检测到新标签页，已切换监听器")
+                                # 清除旧流URL，强制等待新流
+                                latest_stream["url"] = None
+                                self._stream_url = None
+                                # 停止旧转录，强制外层循环重新等待新流
+                                self._transcriber.stop()
+                        # 同步标签页关闭（数量减少时更新基线）
+                        elif len(pages) < last_page_count:
+                            last_page_count = len(pages)
+                except Exception:
+                    pass
+
                 current_url = latest_stream["url"]
                 if not current_url:
                     probed_url = await self._probe_current_stream_url()
@@ -654,7 +696,35 @@ class LiveCompanionEngine:
                         await asyncio.wait_for(asyncio.shield(transcription_task), timeout=2.0)
                         break  # 转录完成（ffmpeg退出）
                     except asyncio.TimeoutError:
-                        # 转录还在进行，检查是否有新流URL
+                        # 转录还在进行，检查是否有新流URL或新标签页
+                        # 先检测新标签页（抖音切换直播间可能通过 target=_blank 打开）
+                        try:
+                            if self._context:
+                                pages = self._context.pages
+                                if len(pages) > last_page_count:
+                                    last_page_count = len(pages)
+                                    new_page = pages[-1]
+                                    if new_page != monitored_page:
+                                        try:
+                                            monitored_page.remove_listener("response", handle_response)
+                                            monitored_page.remove_listener("request", handle_request)
+                                        except Exception:
+                                            pass
+                                        monitored_page = new_page
+                                        self._page = new_page
+                                        if self._danmu_reader:
+                                            self._danmu_reader.page = new_page
+                                        if self._sender:
+                                            self._sender.page = new_page
+                                        new_page.on("response", handle_response)
+                                        new_page.on("request", handle_request)
+                                        self._emit_status("检测到新标签页，已切换监听器")
+                                        latest_stream["url"] = None
+                                        self._stream_url = None
+                                        self._transcriber.stop()
+                        except Exception:
+                            pass
+                        # 检测到新流URL或新标签页导致流被清除
                         if latest_stream["url"] != current_url:
                             self._emit_status("检测到直播流切换，清除旧数据并重启...")
                             # 清除旧房间的弹幕和转录数据，避免跨房间污染
@@ -687,10 +757,10 @@ class LiveCompanionEngine:
                 # 如果是正常退出（非切换），短暂等待后用当前URL重启
                 await asyncio.sleep(1)
         finally:
-            if self._page:
+            if monitored_page:
                 try:
-                    self._page.remove_listener("response", handle_response)
-                    self._page.remove_listener("request", handle_request)
+                    monitored_page.remove_listener("response", handle_response)
+                    monitored_page.remove_listener("request", handle_request)
                 except Exception:
                     pass
 
@@ -1278,15 +1348,28 @@ class LiveCompanionEngine:
 
         self._emit_status(f"自动点赞循环启动，间隔 {interval:.0f} 秒")
 
+        # 调试：跟踪跳过原因，避免刷屏（每 15 秒输出一次状态）
+        _last_debug_time = 0.0
+        import time as _time
+
         while self.is_running:
             try:
                 if not self.is_ready_to_send():
+                    now = _time.time()
+                    if now - _last_debug_time > 15:
+                        _last_debug_time = now
+                        self._emit_status(f"[点赞调试] 未就绪: page={self._page is not None}, sender={self._sender is not None}, running={self.is_running}")
                     await asyncio.sleep(5)
                     continue
 
                 # 检查是否还在直播间（避免在主页/跳转后点赞）
                 import re as _re
-                if not _re.search(self.platform.room_url_pattern, self._page.url):
+                current_url = self._page.url
+                if not _re.search(self.platform.room_url_pattern, current_url):
+                    now = _time.time()
+                    if now - _last_debug_time > 15:
+                        _last_debug_time = now
+                        self._emit_status(f"[点赞调试] URL不匹配直播间: {current_url[-50:]} (pattern={self.platform.room_url_pattern})")
                     await asyncio.sleep(5)
                     continue
 

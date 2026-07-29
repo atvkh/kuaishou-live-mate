@@ -722,7 +722,8 @@ class DouyinPlatform(Platform):
         - 浏览器拦截器自动加 msToken + a_bogus 签名
         - 响应 {"status_code":0} 表示成功
 
-        与快手方案完全一致：双击 video → 前端自动加签 → 真实生效。
+        改进：页面可能有多个 video（广告/预览），选择面积最大的直播 video。
+        备选：双击失败时尝试点击点赞按钮（心形图标）。
 
         Args:
             page: Playwright Page（必须已进入直播间）
@@ -732,7 +733,41 @@ class DouyinPlatform(Platform):
             (ok, detail)
         """
         try:
+            # 先检查页面是否有 video 元素及其状态
+            video_info = await page.evaluate("""() => {
+                const videos = Array.from(document.querySelectorAll('video'));
+                if (videos.length === 0) return {count: 0, msg: '无 video 元素'};
+                // 选择面积最大的 video（直播画面通常是最大的）
+                let best = null, bestArea = 0;
+                for (const v of videos) {
+                    const rect = v.getBoundingClientRect();
+                    const area = rect.width * rect.height;
+                    if (area > bestArea) { bestArea = area; best = v; }
+                }
+                const r = best.getBoundingClientRect();
+                return {
+                    count: videos.length,
+                    bestRect: {x: r.x, y: r.y, w: r.width, h: r.height},
+                    bestSrc: (best.currentSrc || best.src || '').slice(0, 80),
+                    readyState: best.readyState,
+                };
+            }""")
+            print(f"[DouyinLike] video 状态: {video_info}")
+
+            if not video_info or video_info.get("count", 0) == 0:
+                return False, {"error": "页面无 video 元素"}
+
+            # 双击面积最大的 video 的中心点（更精确）
+            rect = video_info.get("bestRect", {})
+            if rect and rect.get("w", 0) > 0:
+                cx = rect["x"] + rect["w"] / 2
+                cy = rect["y"] + rect["h"] / 2
+                await page.mouse.dblclick(cx, cy, timeout=5000)
+                return True, {"method": "mouse.dblclick", "debug_info": f"video@({cx:.0f},{cy:.0f})"}
+            # 回退：直接 dblclick 选择器
             await page.dblclick('video', timeout=5000, force=True)
-            return True, {"method": "dblclick", "debug_info": "video double-clicked"}
+            return True, {"method": "dblclick", "debug_info": "video double-clicked (fallback)"}
         except Exception as e:
-            return False, {"error": f"exception:{e}"}
+            err = str(e)
+            print(f"[DouyinLike] 点赞异常: {err}")
+            return False, {"error": f"exception:{err}"}
