@@ -77,3 +77,15 @@ begin
   Exec(ExpandConstant('taskkill'), '/f /im 旁白.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;
+
+// 卸载前先关闭正在运行的程序，避免文件占用导致删除失败
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  // 关闭旁白主进程
+  Exec(ExpandConstant('taskkill'), '/f /im 旁白.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // 关闭由旁白拉起的 playwright node 子进程（按安装路径过滤，避免误杀其他 node）
+  Exec(ExpandConstant('powershell'), '-NoProfile -Command "Get-Process node -ErrorAction SilentlyContinue | Where-Object {$_.Path -like ''*' + ExpandConstant('{app}') + '*''} | Stop-Process -Force"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;
