@@ -30,14 +30,22 @@ def _get_model_dir() -> str:
         for f in os.listdir(cache_dir):
             if f.endswith(".onnx"):
                 return cache_dir
-    # 2. 打包环境：exe同目录下的 models/sensevoice
+    # 2. PyInstaller 打包环境：资源位于 _MEIPASS（onedir 默认为 _internal）
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        bundled = os.path.join(bundle_root, "models", "sensevoice")
+        if os.path.isdir(bundled):
+            for f in os.listdir(bundled):
+                if f.endswith(".onnx"):
+                    return bundled
+    # 3. 兼容将资源放在 exe 同目录的打包方式
     exe_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') else os.getcwd()
     bundled = os.path.join(exe_dir, "models", "sensevoice")
     if os.path.isdir(bundled):
         for f in os.listdir(bundled):
             if f.endswith(".onnx"):
                 return bundled
-    # 3. 默认返回 modelscope ID（首次会自动下载，但需要 funasr 导出 onnx）
+    # 4. 默认返回 modelscope ID（首次会自动下载，但需要 funasr 导出 onnx）
     return "manyeyes/sensevoice-small-onnx"
 
 
